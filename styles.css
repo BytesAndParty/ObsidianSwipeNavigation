@@ -2,5 +2,17 @@
    Swipe Navigation - Styles
    ============================================ */
 
-/* Currently no custom styles needed - plugin uses native Obsidian UI */
-/* Settings tab uses standard Obsidian components */
+/* === Settings Tab === */
+.swipe-navigation-settings {
+	/* Uses default Obsidian settings styling */
+}
+
+/* === Compatibility List === */
+.swipe-navigation-compat-list {
+	padding-left: var(--size-4-4);
+	color: var(--text-muted);
+}
+
+.swipe-navigation-compat-list li {
+	margin-bottom: var(--size-4-1);
+}
