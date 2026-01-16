@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-swipe-navigation",
+	"name": "Swipe Navigation",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "Navigate back and forward using two-finger trackpad swipe gestures on desktop",
+	"author": "Robert Stickler",
+	"authorUrl": "https://github.com/robert-stickler",
+	"isDesktopOnly": true
+}
