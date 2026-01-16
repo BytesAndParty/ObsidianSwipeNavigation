@@ -1,16 +1,18 @@
 // === Settings ===
 
 export interface SwipeNavigationSettings {
-	sensitivity: number; // Minimum deltaX threshold to trigger swipe
-	enabled: boolean; // Global enable/disable
+	sensitivity: number;
+	enabled: boolean;
+	debugMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: SwipeNavigationSettings = {
 	sensitivity: 50,
 	enabled: true,
+	debugMode: false,
 };
 
 // === Constants ===
 
-export const SWIPE_THRESHOLD = 50; // Minimum horizontal scroll to detect swipe
-export const SWIPE_COOLDOWN = 300; // Milliseconds between swipes to prevent double-triggers
+export const SWIPE_COOLDOWN = 300;
+export const MIN_DELTA_FOR_LOG = 10;
