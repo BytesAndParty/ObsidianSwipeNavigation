@@ -12,8 +12,11 @@ export class SwipeNavigationSettingsTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+		containerEl.addClass('swipe-navigation-settings');
 
 		containerEl.createEl('h2', { text: 'Swipe Navigation Settings' });
+
+		// === Main Settings ===
 
 		new Setting(containerEl)
 			.setName('Enable swipe navigation')
@@ -37,7 +40,22 @@ export class SwipeNavigationSettingsTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		// Info section
+		// === Developer Settings ===
+
+		containerEl.createEl('h3', { text: 'Developer' });
+
+		new Setting(containerEl)
+			.setName('Debug mode')
+			.setDesc('Log wheel events and navigation to the developer console (Cmd+Opt+I)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.debugMode)
+				.onChange(async (value) => {
+					this.plugin.settings.debugMode = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// === Info Section ===
+
 		containerEl.createEl('h3', { text: 'How to use' });
 		containerEl.createEl('p', {
 			text: 'Use two-finger swipe left/right on your trackpad to navigate back and forward through your note history.'
@@ -45,9 +63,10 @@ export class SwipeNavigationSettingsTab extends PluginSettingTab {
 
 		containerEl.createEl('h3', { text: 'Compatibility' });
 		const compatList = containerEl.createEl('ul');
-		compatList.createEl('li', { text: '✅ macOS Trackpad - Excellent support' });
-		compatList.createEl('li', { text: '✅ Windows Precision Touchpad - Good support' });
-		compatList.createEl('li', { text: '⚠️ Older Windows Trackpads - Limited support' });
-		compatList.createEl('li', { text: '❌ Desktop with mouse only - Not supported' });
+		compatList.addClass('swipe-navigation-compat-list');
+		compatList.createEl('li', { text: 'macOS Trackpad - Excellent support' });
+		compatList.createEl('li', { text: 'Windows Precision Touchpad - Good support' });
+		compatList.createEl('li', { text: 'Older Windows Trackpads - Limited support' });
+		compatList.createEl('li', { text: 'Desktop with mouse only - Not supported' });
 	}
 }
