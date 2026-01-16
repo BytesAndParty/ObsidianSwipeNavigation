@@ -74,6 +74,7 @@ See [TEST.md](TEST.md) for comprehensive testing instructions and checklist.
 
 - **Enable swipe navigation**: Toggle the plugin on/off
 - **Swipe sensitivity**: Adjust how far you need to swipe to trigger navigation (20-100, default: 50)
+- **Debug mode**: Enable console logging for troubleshooting (Developer section)
 
 ## How It Works
 
