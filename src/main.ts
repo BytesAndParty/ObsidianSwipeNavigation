@@ -1,65 +1,77 @@
-import { Plugin } from 'obsidian';
-import { SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN } from './types';
+import { Notice, Plugin } from 'obsidian';
+import { SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN, MIN_DELTA_FOR_LOG } from './types';
 import { SwipeNavigationSettingsTab } from './SettingsTab';
+
+// === Type Declarations for Obsidian Internal API ===
+
+declare module 'obsidian' {
+	interface App {
+		commands: {
+			executeCommandById(id: string): boolean;
+		};
+	}
+}
+
+// === Constants ===
+
+type NavigationDirection = 'back' | 'forward';
+
+const NAVIGATION_COMMANDS: Record<NavigationDirection, string> = {
+	back: 'app:go-back',
+	forward: 'app:go-forward',
+};
+
+// === Plugin ===
 
 export default class SwipeNavigationPlugin extends Plugin {
 	settings: SwipeNavigationSettings;
 	private lastSwipeTime: number = 0;
-	private abortController: AbortController;
+	private abortController: AbortController | null = null;
 
 	async onload() {
 		await this.loadSettings();
 
-		// Register settings tab
 		this.addSettingTab(new SwipeNavigationSettingsTab(this.app, this));
 
-		// Setup trackpad gesture listener
 		this.setupSwipeListener();
 
-		console.log('[SwipeNavigation] Plugin loaded');
+		this.log('Plugin loaded');
 	}
 
 	onunload() {
-		// Clean up event listeners
-		if (this.abortController) {
-			this.abortController.abort();
-		}
-		console.log('[SwipeNavigation] Plugin unloaded');
+		this.abortController?.abort();
+		this.abortController = null;
+		this.log('Plugin unloaded');
 	}
 
-	/**
-	 * Sets up the wheel event listener for trackpad swipe detection
-	 */
+	// === Swipe Detection ===
+
 	private setupSwipeListener() {
+		// Defensive cleanup of existing listener
+		this.abortController?.abort();
+
 		this.abortController = new AbortController();
 		const { signal } = this.abortController;
 
-		// Listen to wheel events on the document
 		document.addEventListener('wheel', (event: WheelEvent) => {
 			this.handleWheelEvent(event);
 		}, { signal, passive: true });
 	}
 
-	/**
-	 * Handles wheel events and detects horizontal swipe gestures
-	 */
 	private handleWheelEvent(event: WheelEvent) {
-		// Skip if plugin is disabled
 		if (!this.settings.enabled) {
 			return;
 		}
 
-		// Only process horizontal swipes (deltaX)
 		const horizontalDelta = event.deltaX;
 		const verticalDelta = Math.abs(event.deltaY);
 
-		// Debug logging (can be removed after testing)
-		if (Math.abs(horizontalDelta) > 10 || verticalDelta > 10) {
-			console.log('[SwipeNavigation] Wheel event:', {
+		// Debug logging (only when debugMode is enabled)
+		if (this.settings.debugMode && (Math.abs(horizontalDelta) > MIN_DELTA_FOR_LOG || verticalDelta > MIN_DELTA_FOR_LOG)) {
+			this.log('Wheel event:', {
 				deltaX: horizontalDelta.toFixed(2),
 				deltaY: event.deltaY.toFixed(2),
 				threshold: this.settings.sensitivity,
-				enabled: this.settings.enabled
 			});
 		}
 
@@ -68,53 +80,57 @@ export default class SwipeNavigationPlugin extends Plugin {
 			return;
 		}
 
-		// Check if swipe exceeds sensitivity threshold
 		const threshold = this.settings.sensitivity;
 
-		// Swipe left (navigate back)
 		if (horizontalDelta < -threshold) {
-			this.navigateBack();
-		}
-		// Swipe right (navigate forward)
-		else if (horizontalDelta > threshold) {
-			this.navigateForward();
+			this.navigate('back');
+		} else if (horizontalDelta > threshold) {
+			this.navigate('forward');
 		}
 	}
 
-	/**
-	 * Navigate to previous location in history
-	 */
-	private navigateBack() {
-		// Cooldown check to prevent double-triggers
-		const now = Date.now();
-		if (now - this.lastSwipeTime < SWIPE_COOLDOWN) {
-			console.log('[SwipeNavigation] Navigate back blocked by cooldown');
+	// === Navigation ===
+
+	private navigate(direction: NavigationDirection) {
+		if (!this.checkCooldown(direction)) {
 			return;
 		}
-		this.lastSwipeTime = now;
 
-		console.log('[SwipeNavigation] Navigating BACK');
-		// Execute Obsidian's native "Navigate back" command
-		// @ts-ignore - app.commands exists but not in type definitions
-		this.app.commands.executeCommandById('app:go-back');
+		this.lastSwipeTime = Date.now();
+
+		const command = NAVIGATION_COMMANDS[direction];
+		const success = this.app.commands.executeCommandById(command);
+
+		if (success) {
+			this.log(`Navigating ${direction.toUpperCase()}`);
+		} else {
+			this.logWarn(`Navigation ${direction} failed - command not found`);
+			new Notice(`Swipe Navigation: Could not navigate ${direction}`);
+		}
 	}
 
-	/**
-	 * Navigate to next location in history
-	 */
-	private navigateForward() {
-		// Cooldown check to prevent double-triggers
+	private checkCooldown(direction: NavigationDirection): boolean {
 		const now = Date.now();
-		if (now - this.lastSwipeTime < SWIPE_COOLDOWN) {
-			console.log('[SwipeNavigation] Navigate forward blocked by cooldown');
-			return;
-		}
-		this.lastSwipeTime = now;
+		const timeSinceLastSwipe = now - this.lastSwipeTime;
 
-		console.log('[SwipeNavigation] Navigating FORWARD');
-		// Execute Obsidian's native "Navigate forward" command
-		// @ts-ignore - app.commands exists but not in type definitions
-		this.app.commands.executeCommandById('app:go-forward');
+		if (timeSinceLastSwipe < SWIPE_COOLDOWN) {
+			if (this.settings.debugMode) {
+				this.log(`Navigate ${direction} blocked by cooldown (${timeSinceLastSwipe}ms < ${SWIPE_COOLDOWN}ms)`);
+			}
+			return false;
+		}
+
+		return true;
+	}
+
+	// === Utilities ===
+
+	private log(message: string, data?: unknown) {
+		console.log('[SwipeNavigation]', message, data ?? '');
+	}
+
+	private logWarn(message: string, data?: unknown) {
+		console.warn('[SwipeNavigation]', message, data ?? '');
 	}
 
 	// === Settings Management ===
