@@ -37,8 +37,12 @@
 - [x] Write detailed documentation (README, DEVELOPMENT.md)
 - [x] Add versions.json for updates
 - [x] Test on Windows
-- [ ] Create demo video/GIF (optional, post-release)
-- [ ] Submit to Community Plugins
+
+### Phase 6: Publishing
+- [ ] Push to GitHub repository
+- [ ] Create GitHub Release (tag v1.0.0) with main.js, manifest.json, styles.css
+- [ ] Submit PR to obsidian-releases (community-plugins.json)
+- [ ] Create demo video/GIF (optional)
 
 ## Testing Status
 
