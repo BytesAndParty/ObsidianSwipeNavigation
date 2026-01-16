@@ -15,7 +15,7 @@
 - [x] Test basic wheel event detection
 - [x] Verify navigation commands work (`app:go-back`, `app:go-forward`)
 - [x] Test on macOS trackpad
-- [ ] Test on Windows Precision Touchpad (pending)
+- [x] Test on Windows Precision Touchpad
 - [x] Fine-tune sensitivity defaults (50 works well)
 
 ### Phase 3: Settings & UI ✅
@@ -33,20 +33,20 @@
 - [x] BEM CSS naming convention
 - [x] Obsidian CSS variables
 
-### Phase 5: Release Preparation 🚧
+### Phase 5: Release Preparation ✅
 - [x] Write detailed documentation (README, DEVELOPMENT.md)
 - [x] Add versions.json for updates
-- [ ] Test on Windows (pending)
+- [x] Test on Windows
 - [ ] Create demo video/GIF (optional, post-release)
-- [ ] Submit to Community Plugins (after Windows test)
+- [ ] Submit to Community Plugins
 
 ## Testing Status
 
 ### macOS Testing ✅
 - [x] MacBook trackpad - Works perfectly
 
-### Windows Testing (Pending)
-- [ ] Dell Precision laptop / Precision Touchpad
+### Windows Testing ✅
+- [x] Windows Precision Touchpad - Works perfectly
 
 ## Answered Questions
 
