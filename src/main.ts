@@ -1,14 +1,22 @@
-import { Notice, Plugin } from 'obsidian';
-import { SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN, MIN_DELTA_FOR_LOG } from './types';
+import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN, MIN_DELTA_FOR_LOG, SWIPE_THRESHOLD_MULTIPLIER, MIN_VELOCITY_TO_ACTIVATE } from './types';
 import { SwipeNavigationSettingsTab } from './SettingsTab';
 
 // === Type Declarations for Obsidian Internal API ===
+
+interface LeafHistory {
+	backHistory: unknown[];
+	forwardHistory: unknown[];
+}
 
 declare module 'obsidian' {
 	interface App {
 		commands: {
 			executeCommandById(id: string): boolean;
 		};
+	}
+	interface WorkspaceLeaf {
+		history: LeafHistory;
 	}
 }
 
@@ -28,11 +36,21 @@ export default class SwipeNavigationPlugin extends Plugin {
 	private lastSwipeTime: number = 0;
 	private abortController: AbortController | null = null;
 
+	// Swipe state tracking
+	private accumulatedDelta: number = 0;
+	private currentDirection: NavigationDirection | null = null;
+	private swipeActive: boolean = false; // Only true if velocity threshold was met
+
+	// Visual indicator elements
+	private indicatorLeft: HTMLElement | null = null;
+	private indicatorRight: HTMLElement | null = null;
+
 	async onload() {
 		await this.loadSettings();
 
 		this.addSettingTab(new SwipeNavigationSettingsTab(this.app, this));
 
+		this.createIndicators();
 		this.setupSwipeListener();
 
 		this.log('Plugin loaded');
@@ -41,7 +59,63 @@ export default class SwipeNavigationPlugin extends Plugin {
 	onunload() {
 		this.abortController?.abort();
 		this.abortController = null;
+		this.removeIndicators();
 		this.log('Plugin unloaded');
+	}
+
+	// === Visual Indicators ===
+
+	private createIndicators() {
+		// Left indicator (for "back" navigation)
+		this.indicatorLeft = document.body.createDiv({
+			cls: 'swipe-nav-indicator swipe-nav-indicator-left',
+		});
+		this.indicatorLeft.createDiv({ cls: 'swipe-nav-indicator-arrow' });
+
+		// Right indicator (for "forward" navigation)
+		this.indicatorRight = document.body.createDiv({
+			cls: 'swipe-nav-indicator swipe-nav-indicator-right',
+		});
+		this.indicatorRight.createDiv({ cls: 'swipe-nav-indicator-arrow' });
+	}
+
+	private removeIndicators() {
+		this.indicatorLeft?.remove();
+		this.indicatorRight?.remove();
+		this.indicatorLeft = null;
+		this.indicatorRight = null;
+	}
+
+	private updateIndicator(direction: NavigationDirection, progress: number) {
+		const indicator = direction === 'back' ? this.indicatorLeft : this.indicatorRight;
+		if (!indicator) return;
+
+		const clampedProgress = Math.min(Math.max(progress, 0), 1);
+		const width = clampedProgress * 60; // max 60px width
+
+		indicator.style.width = `${width}px`;
+		indicator.style.opacity = `${clampedProgress}`;
+
+		// Show arrow when threshold is reached
+		const arrow = indicator.querySelector('.swipe-nav-indicator-arrow') as HTMLElement;
+		if (arrow) {
+			arrow.style.opacity = clampedProgress >= 1 ? '1' : '0';
+		}
+
+		indicator.classList.toggle('ready', clampedProgress >= 1);
+	}
+
+	private resetIndicators() {
+		if (this.indicatorLeft) {
+			this.indicatorLeft.style.width = '0';
+			this.indicatorLeft.style.opacity = '0';
+			this.indicatorLeft.classList.remove('ready');
+		}
+		if (this.indicatorRight) {
+			this.indicatorRight.style.width = '0';
+			this.indicatorRight.style.opacity = '0';
+			this.indicatorRight.classList.remove('ready');
+		}
 	}
 
 	// === Swipe Detection ===
@@ -71,7 +145,8 @@ export default class SwipeNavigationPlugin extends Plugin {
 			this.log('Wheel event:', {
 				deltaX: horizontalDelta.toFixed(2),
 				deltaY: event.deltaY.toFixed(2),
-				threshold: this.settings.sensitivity,
+				accumulated: this.accumulatedDelta.toFixed(2),
+				active: this.swipeActive,
 			});
 		}
 
@@ -80,13 +155,96 @@ export default class SwipeNavigationPlugin extends Plugin {
 			return;
 		}
 
-		const threshold = this.settings.sensitivity;
-
-		if (horizontalDelta < -threshold) {
-			this.navigate('back');
-		} else if (horizontalDelta > threshold) {
-			this.navigate('forward');
+		// Ignore very small movements
+		if (Math.abs(horizontalDelta) < 1) {
+			return;
 		}
+
+		// Check velocity threshold to activate swipe gesture
+		// Only activate if this is a fast swipe, not slow horizontal scrolling
+		if (!this.swipeActive) {
+			if (Math.abs(horizontalDelta) >= MIN_VELOCITY_TO_ACTIVATE) {
+				this.swipeActive = true;
+				if (this.settings.debugMode) {
+					this.log('Swipe activated (velocity threshold met)');
+				}
+			} else {
+				// Too slow, likely horizontal scrolling - ignore
+				return;
+			}
+		}
+
+		// Accumulate the delta
+		this.accumulatedDelta += horizontalDelta;
+
+		// Determine current swipe direction
+		const newDirection: NavigationDirection | null =
+			this.accumulatedDelta < 0 ? 'back' :
+			this.accumulatedDelta > 0 ? 'forward' : null;
+
+		// If direction changed, reset
+		if (this.currentDirection && newDirection && this.currentDirection !== newDirection) {
+			this.resetSwipeState();
+			this.swipeActive = true; // Keep active after direction change
+			this.accumulatedDelta = horizontalDelta;
+		}
+
+		this.currentDirection = newDirection;
+
+		// Check if navigation is possible for this direction
+		if (this.currentDirection && !this.canNavigate(this.currentDirection)) {
+			// Can't navigate in this direction, don't show indicator
+			return;
+		}
+
+		// Calculate progress towards threshold
+		const threshold = this.settings.sensitivity * SWIPE_THRESHOLD_MULTIPLIER;
+		const progress = Math.abs(this.accumulatedDelta) / threshold;
+
+		// Update visual indicator
+		if (this.currentDirection) {
+			this.updateIndicator(this.currentDirection, progress);
+		}
+
+		// Immediate navigation if distance threshold reached
+		if (progress >= 1 && this.currentDirection) {
+			this.navigate(this.currentDirection);
+			this.animateIndicatorReset();
+			this.resetSwipeState();
+		}
+	}
+
+	private resetSwipeState() {
+		this.accumulatedDelta = 0;
+		this.currentDirection = null;
+		this.swipeActive = false;
+	}
+
+	private canNavigate(direction: NavigationDirection): boolean {
+		const leaf = this.app.workspace.activeLeaf;
+		if (!leaf?.history) {
+			return true; // If we can't check, assume navigation is possible
+		}
+
+		if (direction === 'back') {
+			return leaf.history.backHistory.length > 0;
+		} else {
+			return leaf.history.forwardHistory.length > 0;
+		}
+	}
+
+	private animateIndicatorReset() {
+		// Add transition class for smooth animation
+		this.indicatorLeft?.classList.add('animating');
+		this.indicatorRight?.classList.add('animating');
+
+		this.resetIndicators();
+
+		// Remove transition class after animation
+		setTimeout(() => {
+			this.indicatorLeft?.classList.remove('animating');
+			this.indicatorRight?.classList.remove('animating');
+		}, 200);
 	}
 
 	// === Navigation ===

@@ -59,12 +59,19 @@
 3. **Cooldown**: 300ms works well ✅
 4. **Passive listener**: Passive is fine, no need for preventDefault() ✅
 
+### Phase 7: Visual Feedback (Safari-Style) ✅
+- [x] Add swipe state tracking (accumulate deltaX, detect swipe end via timeout)
+- [x] Create visual indicator elements (edge bars with arrows)
+- [x] Implement progressive visual feedback during swipe
+- [x] Add cancel/commit logic (navigate only if threshold reached at swipe end)
+- [x] CSS styles with Obsidian variables and smooth animations
+
 ## Future Improvements (Post-Release)
 
-- [ ] Visual feedback animation when navigation occurs
 - [ ] Per-view enable/disable (e.g., disable in graph view)
 - [ ] Gesture customization
 - [ ] Statistics/analytics
+- [ ] Optional: Page preview during swipe (like Safari)
 
 ## Resources
 
