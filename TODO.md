@@ -3,6 +3,7 @@
 ## Development Roadmap
 
 ### Phase 1: Initial Setup ✅
+
 - [x] Create project structure
 - [x] Setup TypeScript configuration
 - [x] Setup build system (esbuild)
@@ -12,6 +13,7 @@
 - [x] Create install-to-vault.sh script
 
 ### Phase 2: Core Implementation ✅
+
 - [x] Test basic wheel event detection
 - [x] Verify navigation commands work (`app:go-back`, `app:go-forward`)
 - [x] Test on macOS trackpad
@@ -19,12 +21,14 @@
 - [x] Fine-tune sensitivity defaults (50 works well)
 
 ### Phase 3: Settings & UI ✅
+
 - [x] Test settings tab functionality
 - [x] Verify enable/disable toggle works
 - [x] Test sensitivity slider
 - [x] Add debug mode toggle for developers
 
 ### Phase 4: Code Quality ✅
+
 - [x] Code review and refactoring
 - [x] Remove unused constants
 - [x] DRY navigation methods
@@ -34,11 +38,13 @@
 - [x] Obsidian CSS variables
 
 ### Phase 5: Release Preparation ✅
+
 - [x] Write detailed documentation (README, DEVELOPMENT.md)
 - [x] Add versions.json for updates
 - [x] Test on Windows
 
 ### Phase 6: Publishing
+
 - [ ] Push to GitHub repository
 - [ ] Create GitHub Release (tag v1.0.0) with main.js, manifest.json, styles.css
 - [ ] Submit PR to obsidian-releases (community-plugins.json)
@@ -47,9 +53,11 @@
 ## Testing Status
 
 ### macOS Testing ✅
+
 - [x] MacBook trackpad - Works perfectly
 
 ### Windows Testing ✅
+
 - [x] Windows Precision Touchpad - Works perfectly
 
 ## Answered Questions
@@ -60,6 +68,7 @@
 4. **Passive listener**: Passive is fine, no need for preventDefault() ✅
 
 ### Phase 7: Visual Feedback (Safari-Style) ✅
+
 - [x] Add swipe state tracking (accumulate deltaX, detect swipe end via timeout)
 - [x] Create visual indicator elements (edge bars with arrows)
 - [x] Implement progressive visual feedback during swipe
@@ -69,9 +78,7 @@
 ## Future Improvements (Post-Release)
 
 - [ ] Per-view enable/disable (e.g., disable in graph view)
-- [ ] Gesture customization
-- [ ] Statistics/analytics
-- [ ] Optional: Page preview during swipe (like Safari)
+- [ ] if not swiped far enough, set back
 
 ## Resources
 

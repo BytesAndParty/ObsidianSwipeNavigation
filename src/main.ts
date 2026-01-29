@@ -1,5 +1,5 @@
 import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
-import { SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN, MIN_DELTA_FOR_LOG, SWIPE_THRESHOLD_MULTIPLIER, MIN_VELOCITY_TO_ACTIVATE } from './types';
+import { SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN, MIN_DELTA_FOR_LOG, SWIPE_THRESHOLD_MULTIPLIER, MIN_VELOCITY_TO_ACTIVATE, GESTURE_IDLE_TIMEOUT, DECAY_ANIMATION_DURATION } from './types';
 import { SwipeNavigationSettingsTab } from './SettingsTab';
 
 // === Type Declarations for Obsidian Internal API ===
@@ -40,6 +40,8 @@ export default class SwipeNavigationPlugin extends Plugin {
 	private accumulatedDelta: number = 0;
 	private currentDirection: NavigationDirection | null = null;
 	private swipeActive: boolean = false; // Only true if velocity threshold was met
+	private navigationLocked: boolean = false; // Prevents multiple navigations per gesture
+	private gestureIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Visual indicator elements
 	private indicatorLeft: HTMLElement | null = null;
@@ -59,6 +61,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 	onunload() {
 		this.abortController?.abort();
 		this.abortController = null;
+		this.clearGestureIdleTimer();
 		this.removeIndicators();
 		this.log('Plugin unloaded');
 	}
@@ -147,6 +150,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 				deltaY: event.deltaY.toFixed(2),
 				accumulated: this.accumulatedDelta.toFixed(2),
 				active: this.swipeActive,
+				locked: this.navigationLocked,
 			});
 		}
 
@@ -157,6 +161,14 @@ export default class SwipeNavigationPlugin extends Plugin {
 
 		// Ignore very small movements
 		if (Math.abs(horizontalDelta) < 1) {
+			return;
+		}
+
+		// Reset the idle timer on every wheel event (gesture is still active)
+		this.resetGestureIdleTimer();
+
+		// If navigation already fired for this gesture, ignore further input
+		if (this.navigationLocked) {
 			return;
 		}
 
@@ -206,11 +218,11 @@ export default class SwipeNavigationPlugin extends Plugin {
 			this.updateIndicator(this.currentDirection, progress);
 		}
 
-		// Immediate navigation if distance threshold reached
+		// Navigate if distance threshold reached (only once per gesture)
 		if (progress >= 1 && this.currentDirection) {
 			this.navigate(this.currentDirection);
+			this.navigationLocked = true;
 			this.animateIndicatorReset();
-			this.resetSwipeState();
 		}
 	}
 
@@ -218,6 +230,34 @@ export default class SwipeNavigationPlugin extends Plugin {
 		this.accumulatedDelta = 0;
 		this.currentDirection = null;
 		this.swipeActive = false;
+		this.navigationLocked = false;
+	}
+
+	// === Gesture Idle Detection ===
+
+	private resetGestureIdleTimer() {
+		this.clearGestureIdleTimer();
+		this.gestureIdleTimer = setTimeout(() => {
+			this.onGestureEnd();
+		}, GESTURE_IDLE_TIMEOUT);
+	}
+
+	private clearGestureIdleTimer() {
+		if (this.gestureIdleTimer !== null) {
+			clearTimeout(this.gestureIdleTimer);
+			this.gestureIdleTimer = null;
+		}
+	}
+
+	private onGestureEnd() {
+		if (this.settings.debugMode && this.swipeActive) {
+			this.log('Gesture ended (idle timeout)');
+		}
+		// Smoothly animate indicators back to zero
+		if (!this.navigationLocked) {
+			this.animateIndicatorReset();
+		}
+		this.resetSwipeState();
 	}
 
 	private canNavigate(direction: NavigationDirection): boolean {
@@ -240,11 +280,11 @@ export default class SwipeNavigationPlugin extends Plugin {
 
 		this.resetIndicators();
 
-		// Remove transition class after animation
+		// Remove transition class after animation completes
 		setTimeout(() => {
 			this.indicatorLeft?.classList.remove('animating');
 			this.indicatorRight?.classList.remove('animating');
-		}, 200);
+		}, DECAY_ANIMATION_DURATION);
 	}
 
 	// === Navigation ===
