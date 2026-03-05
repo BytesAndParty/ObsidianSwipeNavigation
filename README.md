@@ -108,6 +108,12 @@ The plugin listens to `wheel` events from your trackpad and detects horizontal s
 - Lower values = more sensitive
 - Higher values = requires longer swipe
 
+## Works Well with Other BytesAndParty Plugins
+
+- [Command Overview](https://github.com/BytesAndParty/CommandOverview) - Swipe to navigate context, then execute commands from one keyboard-driven overlay.
+- [Copy File Path](https://github.com/BytesAndParty/CopyFilePath) - Navigate to any note and immediately copy its system path.
+- [Obsidian Recall](https://github.com/BytesAndParty/ObsidianRecall) - Fast back/forward history movement while jumping between cards and source notes.
+
 ## Contributing
 
 Contributions, bug reports, and feature requests are welcome!
