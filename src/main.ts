@@ -19,6 +19,9 @@ declare module 'obsidian' {
 			executeCommandById(id: string): boolean;
 		};
 	}
+	interface Workspace {
+		activeLeaf: WorkspaceLeaf | null;
+	}
 	interface WorkspaceLeaf {
 		history: LeafHistory;
 	}
@@ -194,9 +197,8 @@ export default class SwipeNavigationPlugin extends Plugin {
 	 */
 	private setupThreeFingerSwipe(): boolean {
 		try {
-			// @ts-ignore — Electron internal API, not in Obsidian's type definitions.
-			// Obsidian uses @electron/remote to expose main-process modules to the renderer.
-			const { remote } = require('electron');
+			const electron = typeof window !== 'undefined' && (window as any).require ? (window as any).require('electron') : null;
+			const remote = electron?.remote;
 			const win = remote?.getCurrentWindow?.();
 
 			if (!win) {
@@ -403,7 +405,6 @@ export default class SwipeNavigationPlugin extends Plugin {
 	}
 
 	private canNavigate(direction: NavigationDirection): boolean {
-		// @ts-ignore — activeLeaf is deprecated but still functional
 		const leaf = this.app.workspace.activeLeaf;
 		if (!leaf?.history) {
 			return true;
@@ -426,7 +427,6 @@ export default class SwipeNavigationPlugin extends Plugin {
 		this.lastSwipeTime = Date.now();
 
 		const command = NAVIGATION_COMMANDS[direction];
-		// @ts-ignore — executeCommandById is an internal Obsidian API
 		const success = this.app.commands.executeCommandById(command);
 
 		if (success) {
