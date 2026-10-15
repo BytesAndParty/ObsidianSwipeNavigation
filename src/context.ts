@@ -1,4 +1,5 @@
 import { Workspace, WorkspaceLeaf } from 'obsidian';
+import { isLikelyMouseWheel } from './input';
 
 // === Gesture Context ===
 // Decides once per gesture, from its first horizontal wheel event, whether the
@@ -8,9 +9,6 @@ import { Workspace, WorkspaceLeaf } from 'obsidian';
 
 // Tolerance for sub-pixel rounding in scroll measurements
 const SCROLL_EPSILON = 1;
-
-// Notched mouse wheels report the legacy wheelDelta in multiples of 120 per notch
-const MOUSE_WHEEL_NOTCH = 120;
 
 export type GestureRejectReason =
 	| 'modifier-key'
@@ -40,7 +38,7 @@ export function evaluateGestureStart(
 	if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
 		return { leaf: null, reason: 'modifier-key' };
 	}
-	if (isLikelyMouseWheel(event)) {
+	if (isLikelyMouseWheel(event.deltaMode, event.deltaX, (event as LegacyWheelEvent).wheelDeltaX ?? 0)) {
 		return { leaf: null, reason: 'mouse-wheel' };
 	}
 
@@ -63,19 +61,6 @@ export function evaluateGestureStart(
 	}
 
 	return { leaf, viewType };
-}
-
-/**
- * Trackpad gestures start with deltas of a few pixels. A notched mouse wheel
- * (including Shift + wheel and tilt/thumb wheels) starts with a full notch.
- */
-function isLikelyMouseWheel(event: WheelEvent): boolean {
-	// 0 = DOM_DELTA_PIXEL; line or page deltas never come from a trackpad
-	if (event.deltaMode !== 0) {
-		return true;
-	}
-	const legacyDelta = (event as LegacyWheelEvent).wheelDeltaX ?? 0;
-	return legacyDelta !== 0 && legacyDelta % MOUSE_WHEEL_NOTCH === 0;
 }
 
 function findLeafAt(workspace: Workspace, target: Node): WorkspaceLeaf | null {

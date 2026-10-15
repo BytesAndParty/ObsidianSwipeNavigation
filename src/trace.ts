@@ -1,7 +1,7 @@
 // === Gesture Trace Format ===
 // Shared by the in-app recorder (src/GestureRecorder.ts) and the offline
-// analysis script (scripts/analyze-traces.ts). Type-only module: it must not
-// import anything at runtime, so the script can run outside Obsidian.
+// analysis script (scripts/analyze-traces.ts). Types and constants only: it
+// must not import 'obsidian', so the script can run outside Obsidian.
 
 export const TRACE_VERSION = 1;
 

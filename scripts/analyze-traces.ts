@@ -9,6 +9,7 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import type { GestureTrace, TraceMarker, TraceWheelEvent } from '../src/trace';
+import { isLikelyMouseWheel } from '../src/input';
 
 // Gap without wheel events that separates two gestures
 const GESTURE_GAP_MS = 150;
@@ -25,6 +26,7 @@ interface GestureRow {
 	'Σdx': number;
 	'Σdy': number;
 	'max|dx|': number;
+	'wdx/dx': number | string;
 	'Δt med': number;
 	zero: number;
 	'tail↓': number;
@@ -100,6 +102,7 @@ function summariseGesture(index: number, events: TraceWheelEvent[], markers: Tra
 		'Σdx': round(events.reduce((sum, e) => sum + e.dx, 0)),
 		'Σdy': round(events.reduce((sum, e) => sum + e.dy, 0)),
 		'max|dx|': round(Math.max(...events.map(e => Math.abs(e.dx)))),
+		'wdx/dx': wheelDeltaRatio(events),
 		'Δt med': round(median(intervals)),
 		zero: events.filter(e => e.dx === 0 && e.dy === 0).length,
 		'tail↓': decayingTailLength(events),
@@ -107,6 +110,15 @@ function summariseGesture(index: number, events: TraceWheelEvent[], markers: Tra
 		'last dx': events.slice(-5).map(e => round(e.dx)).join(' '),
 		markers: inGesture.map(markerLabel).join(', '),
 	};
+}
+
+/**
+ * Median of |wheelDeltaX / deltaX|. Chromium on macOS reports 3 for trackpads;
+ * a mouse notch gives a different ratio (e.g. 120 / 100 on Windows). (F26)
+ */
+function wheelDeltaRatio(events: TraceWheelEvent[]): number | string {
+	const ratios = events.filter(e => e.dx !== 0 && e.wdx !== 0).map(e => Math.abs(e.wdx / e.dx));
+	return ratios.length > 0 ? round(median(ratios), 2) : '-';
 }
 
 function markerLabel(marker: TraceMarker): string {
@@ -128,7 +140,7 @@ function markerLabel(marker: TraceMarker): string {
 function analyse(file: string) {
 	const trace = JSON.parse(readFileSync(file, 'utf8')) as GestureTrace;
 	const env = trace.environment;
-	const mouseLike = trace.events.filter(e => e.wdx !== 0 && e.wdx % 120 === 0).length;
+	const mouseLike = trace.events.filter(e => isLikelyMouseWheel(e.mode, e.dx, e.wdx)).length;
 	const withModifiers = trace.events.filter(e => e.mods !== 0).length;
 
 	console.log(`\n=== ${trace.scenarioName} (${trace.scenario}) — ${file}`);
