@@ -12,8 +12,8 @@ Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · 
 
 #### Bugs
 
-- [ ] **F1 Momentum delays and forces navigation.** After lifting, macOS keeps sending inertial wheel events for up to ~1 s. They extend the idle timer and add to the distance: navigation fires late, short swipes still trigger, cancelling barely works. → Phase 2
-- [ ] **F2 Pausing mid-swipe commits.** Holding the fingers still for >200 ms counts as release; moving back afterwards starts a new gesture that may navigate the other way. → Phase 2
+- [~] **F1 Momentum delays and forces navigation.** After lifting, macOS keeps sending inertial wheel events for up to ~1 s. They extend the idle timer and add to the distance: navigation fires late, short swipes still trigger, cancelling barely works. Now: smoothly decaying deltas after a peak count as "fingers lifted", the decision uses the state at the peak and the rest of the momentum is swallowed.
+- [~] **F2 Pausing mid-swipe commits.** Holding the fingers still for >200 ms counts as release; moving back afterwards starts a new gesture that may navigate the other way. Now: the idle timeout is only a 400 ms fallback.
 - [x] **F3 `navigationLocked` was dead code**: set and cleared in the same function. Removed.
 - [x] **F4 Three-finger mode navigated twice.** Obsidian's main process already maps the `BrowserWindow` `swipe` event to `history.back()`/`forward()`, which Obsidian routes to the active leaf's history (confirmed in `obsidian.asar`, Obsidian 1.14.4). Mode removed, settings now explain the built-in macOS option.
 - [~] **F5 Horizontally scrollable content scrolled *and* navigated** (code blocks, wide tables, editor without line wrap, Kanban, zoomed PDF). Now: if the content under the pointer can still scroll in the swipe direction, the whole gesture scrolls; swiping navigates only at the edge (like Safari).
@@ -26,16 +26,16 @@ Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · 
 - [-] **F12 Silent fallback from three- to two-finger mode.** Obsolete with F4.
 - [~] **F13 Direction swapped with natural scrolling off** (Chromium does not expose `directionInvertedFromDevice`). New setting "Reverse swipe direction".
 - [~] **F26 Mouse heuristic rejects trackpad gestures.** Chromium reports a trackpad's `wheelDeltaX` as −3 × `deltaX` on macOS (40 px per 120-unit tick) and −1 × `deltaX` on Windows precision touchpads, so trackpad events with `deltaX` ±40/±80 (macOS) or ±120 (Windows) looked like mouse notches and the whole gesture was ignored. Now a 120-multiple only counts as a notch if its ratio to `deltaX` is neither 3 nor 1 (`src/input.ts`, shared with the analysis script). Still misses high-resolution mice and notches at a page zoom other than 100 %.
-- [ ] **F27 Reversing in one large event overshoots.** On a direction change the accumulated delta restarted at the last event's delta instead of the distance past the start point. → Phase 2 (offset from gesture start, no reset)
+- [~] **F27 Reversing in one large event overshoots.** On a direction change the accumulated delta restarted at the last event's delta instead of the distance past the start point. Now: the offset counts from the gesture start, without reset.
 - [ ] **F28 Swipe distance depends on Obsidian's zoom.** Chromium divides all deltas by the page zoom, so at 150 % a swipe needs 1.5 × the finger travel. Fix needs a reliable source for the zoom factor. → after the device test
 
 #### Handling & feel
 
-- [ ] **F14 Activation needs one event with ≥25 px.** Depends on the refresh rate (120 Hz → half the delta per event); slow deliberate swipes never activate; deltas before activation are lost. → Phase 2
-- [ ] **F15 No axis lock.** The 2.5:1 ratio is checked per event, so diagonal swipes flicker in and out. → Phase 2
+- [~] **F14 Activation needs one event with ≥25 px.** Depends on the refresh rate (120 Hz → half the delta per event); slow deliberate swipes never activate; deltas before activation are lost. Now: the swipe activates with the axis lock and counts from the first event.
+- [~] **F15 No axis lock.** The 2.5:1 ratio is checked per event, so diagonal swipes flicker in and out. Now: the axis is locked after 12 px for the whole gesture.
 - [ ] **F16 Weak indicator feedback.** Linear opacity (barely visible at 30 %), arrow only at 100 %, no resistance past the threshold, no hysteresis (ready state flickers), no feedback when there is no history. → Phase 3
 - [ ] **F17 `animating` class stays for 250 ms**, so a gesture started right after the previous one lags behind. → Phase 3
-- [ ] **F18 Cooldown silently drops a quick second swipe** although the indicator showed "ready". → Phase 2
+- [~] **F18 Cooldown silently drops a quick second swipe** although the indicator showed "ready". Now: no cooldown, a gesture navigates at most once.
 - [ ] **F19 No transition after navigating**; content just swaps. → Phase 3 (optional)
 
 #### Code & release
@@ -53,7 +53,7 @@ Tune with recorded input instead of guessing.
 
 - [x] Gesture recorder (debug mode): commands "Start gesture recording" / "Stop gesture recording", scenario picker, "● REC" in the status bar (click to stop), trace JSON saved to `<vault>/.obsidian/plugins/obsidian-swipe-navigation/traces/`
 - [x] Markers on the same clock: gesture start (accepted / rejected + reason), swipe activated, threshold, gesture end, navigate, file-open
-- [ ] Phase 2 markers: axis lock, release (reason, decision, velocity)
+- [x] Phase 2 markers: axis lock, release (reason, decision, velocity)
 - [x] `bun run analyze-traces <folder>`: one row per gesture (events, duration, Σdx/Σdy, max delta, event interval, zero-delta events, decaying tail, markers)
 - [x] Analysis shows the `wheelDeltaX / deltaX` ratio per gesture and counts notches with the F26 rule (F26)
 - [ ] Install the build in the test vault (`UnfilteredMe`, see PLAN.md); remove the stale `swipe-navigation` folder with the same plugin ID first
@@ -64,6 +64,7 @@ Tune with recorded input instead of guessing.
   - [ ] Swipe back: cancel
   - [ ] Swipe forward
   - [ ] Vertical scrolling
+  - [ ] Scroll, then swipe back right away (gap between vertical momentum and the swipe)
   - [ ] Diagonal scrolling
   - [ ] Wide code block or table
   - [ ] Canvas panning
@@ -109,18 +110,18 @@ Tune with recorded input instead of guessing.
 
 Built before the recordings; all numbers are provisional until the traces are in (see PLAN.md).
 
-- [ ] DOM-free `GestureRecognizer` fed with `{ t, dx, dy }`, tested with synthetic gestures (`bun test`); replay test for `test/fixtures/traces/` that runs once traces exist
-- [ ] States: idle → tracking → swiping (axis locked) / rejected → commit / cancel → settle
-- [ ] Context decided at the first event, a rejected gesture stays rejected until it ends (including momentum)
-- [ ] Axis lock after the first 12 px of total movement, horizontal if |Σdx| ≥ 2 × |Σdy| (F15)
-- [ ] Activation with the axis lock instead of a velocity threshold; count the movement from the start of the gesture (F14)
-- [ ] Offset from the gesture start, direction changes across the start point without reset (F27)
-- [ ] "Ready" with hysteresis: ready at 100 %, back off below 85 %
-- [ ] Momentum detection (≥ 4 smoothly decaying events after a peak) = "fingers lifted": decide with the state at the peak, swallow the rest (F1)
-- [ ] Quick flick navigates from 40 % with ≥ 1.5 px/ms (like iOS); flicking back always cancels
-- [ ] Idle timeout only as a fallback: 400 ms, so a short hold mid-swipe does not commit (F2)
-- [ ] No cooldown between gestures: a gesture navigates at most once, a deliberate second swipe navigates again (F18)
-- [ ] Remove the obsolete constants (`SWIPE_COOLDOWN`, `MIN_VELOCITY_TO_ACTIVATE`, `GESTURE_IDLE_TIMEOUT`)
+- [~] DOM-free `GestureRecognizer` fed with `{ t, dx, dy }`, tested with synthetic gestures (`bun test`); replay test for `test/fixtures/traces/` that runs once traces exist
+- [~] States: idle → tracking → swiping (axis locked) / rejected → commit / cancel → settle
+- [~] Context decided at the first event, a rejected gesture stays rejected until it ends (including momentum)
+- [~] Axis lock after the first 12 px of total movement, horizontal if |Σdx| ≥ 2 × |Σdy| (F15)
+- [~] Activation with the axis lock instead of a velocity threshold; count the movement from the start of the gesture (F14)
+- [~] Offset from the gesture start, direction changes across the start point without reset (F27)
+- [~] "Ready" with hysteresis: ready at 100 %, back off below 85 %
+- [~] Momentum detection (≥ 4 smoothly decaying events after a peak) = "fingers lifted": decide with the state at the peak, swallow the rest (F1)
+- [~] Quick flick navigates from 40 % with ≥ 1.5 px/ms (like iOS); flicking back always cancels
+- [~] Idle timeout only as a fallback: 400 ms, so a short hold mid-swipe does not commit (F2)
+- [~] No cooldown between gestures: a gesture navigates at most once, a deliberate second swipe navigates again (F18)
+- [x] Remove the obsolete constants (`SWIPE_COOLDOWN`, `MIN_VELOCITY_TO_ACTIVATE`, `GESTURE_IDLE_TIMEOUT`)
 
 ### Phase 3: Safari-like feedback
 

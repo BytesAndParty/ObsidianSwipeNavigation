@@ -1,12 +1,13 @@
 import { Notice, Plugin, WorkspaceLeaf, normalizePath } from 'obsidian';
 import {
-	SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN,
-	MIN_DELTA_FOR_LOG, SWIPE_THRESHOLD_MULTIPLIER, MIN_VELOCITY_TO_ACTIVATE,
-	DIRECTION_RATIO, GESTURE_IDLE_TIMEOUT, DECAY_ANIMATION_DURATION
+	SwipeNavigationSettings, DEFAULT_SETTINGS, MIN_DELTA_FOR_LOG,
+	SWIPE_THRESHOLD_MULTIPLIER, DECAY_ANIMATION_DURATION
 } from './types';
 import { SwipeNavigationSettingsTab } from './SettingsTab';
 import { evaluateGestureStart } from './context';
+import { GestureAxis, GestureRecognizer, SwipeDirection, SwipeRelease } from './GestureRecognizer';
 import { GestureRecorder, RecordingScenario, ScenarioSuggestModal, saveTrace } from './GestureRecorder';
+import { absoluteEventTime, now } from './clock';
 
 // === Type Declarations for Obsidian Internal API ===
 
@@ -30,10 +31,8 @@ declare module 'obsidian' {
 
 // === Constants ===
 
-type NavigationDirection = 'back' | 'forward';
-
 // Fallback if a leaf does not expose its history
-const NAVIGATION_COMMANDS: Record<NavigationDirection, string> = {
+const NAVIGATION_COMMANDS: Record<SwipeDirection, string> = {
 	back: 'app:go-back',
 	forward: 'app:go-forward',
 };
@@ -44,21 +43,23 @@ const NAVIGATION_COMMANDS: Record<NavigationDirection, string> = {
 // maps the macOS BrowserWindow 'swipe' event to history.back()/forward().
 export default class SwipeNavigationPlugin extends Plugin {
 	settings: SwipeNavigationSettings;
-	private lastSwipeTime: number = 0;
 
 	// Wheel listeners per window (main window and pop-outs)
 	private windowCleanups = new Map<Window, () => void>();
 	private readonly onWheel = (event: WheelEvent) => this.handleWheelEvent(event);
 
-	// Gesture state: a gesture lasts from its first horizontal wheel event
-	// until no wheel events arrive for GESTURE_IDLE_TIMEOUT
-	private gestureInProgress: boolean = false;
+	// The recognizer decides axis, progress and release from the wheel events;
+	// the plugin adds the context (which pane) and the visual feedback
+	private recognizer = new GestureRecognizer({
+		axis: axis => this.onAxisLocked(axis),
+		progress: (direction, progress, ready) => this.onSwipeProgress(direction, progress, ready),
+		release: release => this.onSwipeRelease(release),
+		end: () => this.onGestureEnd(),
+	}, DEFAULT_SETTINGS.sensitivity * SWIPE_THRESHOLD_MULTIPLIER);
+	private gestureTimer: number | null = null;
 	private gestureLeaf: WorkspaceLeaf | null = null; // null = rejected at gesture start
-	private accumulatedDelta: number = 0;
-	private currentDirection: NavigationDirection | null = null;
-	private swipeActive: boolean = false;
-	private thresholdReached: boolean = false;
-	private gestureIdleTimer: ReturnType<typeof setTimeout> | null = null;
+	private shownDirection: SwipeDirection | null = null;
+	private shownReady: boolean = false;
 
 	// Visual indicator elements
 	private indicatorLeft: HTMLElement | null = null;
@@ -87,7 +88,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 	onunload() {
 		this.windowCleanups.forEach(cleanup => cleanup());
 		this.windowCleanups.clear();
-		this.clearGestureIdleTimer();
+		this.clearGestureTimer();
 		this.removeIndicators();
 		this.log('Plugin unloaded');
 	}
@@ -161,7 +162,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 		}
 	}
 
-	private updateIndicator(direction: NavigationDirection, progress: number) {
+	private updateIndicator(direction: SwipeDirection, progress: number, ready: boolean) {
 		const indicator = direction === 'back' ? this.indicatorLeft : this.indicatorRight;
 		if (!indicator) return;
 
@@ -171,13 +172,13 @@ export default class SwipeNavigationPlugin extends Plugin {
 		indicator.style.width = `${width}px`;
 		indicator.style.opacity = `${clampedProgress}`;
 
-		// Show arrow when threshold is reached
+		// Show arrow when ready to navigate on release
 		const arrow = indicator.querySelector('.swipe-nav-indicator-arrow') as HTMLElement;
 		if (arrow) {
-			arrow.style.opacity = clampedProgress >= 1 ? '1' : '0';
+			arrow.style.opacity = ready ? '1' : '0';
 		}
 
-		indicator.classList.toggle('ready', clampedProgress >= 1);
+		indicator.classList.toggle('ready', ready);
 	}
 
 	private resetIndicators() {
@@ -217,173 +218,94 @@ export default class SwipeNavigationPlugin extends Plugin {
 			return;
 		}
 
-		const scrollDelta = event.deltaX;
-		const verticalDelta = Math.abs(event.deltaY);
+		// Negative deltaX swipes back, unless the user reversed the direction
+		const dx = this.settings.invertDirection ? -event.deltaX : event.deltaX;
+		this.recognizer.feed({ t: absoluteEventTime(event), dx, dy: event.deltaY }, () => this.beginGesture(event));
+		this.scheduleGestureTimer();
 
 		// Debug logging (only when debugMode is enabled)
-		if (this.settings.debugMode && (Math.abs(scrollDelta) > MIN_DELTA_FOR_LOG || verticalDelta > MIN_DELTA_FOR_LOG)) {
+		if (this.settings.debugMode && (Math.abs(event.deltaX) > MIN_DELTA_FOR_LOG || Math.abs(event.deltaY) > MIN_DELTA_FOR_LOG)) {
 			this.log('Wheel event:', {
-				deltaX: scrollDelta.toFixed(2),
+				deltaX: event.deltaX.toFixed(2),
 				deltaY: event.deltaY.toFixed(2),
-				accumulated: this.accumulatedDelta.toFixed(2),
-				active: this.swipeActive,
-				ready: this.thresholdReached,
+				phase: this.recognizer.phase,
 			});
 		}
-
-		// Require horizontal movement to dominate vertical by DIRECTION_RATIO (2.5:1).
-		// Chromium uses this ratio to distinguish intentional horizontal swipes from
-		// diagonal scrolling. A simple `>` comparison was too permissive.
-		if (verticalDelta * DIRECTION_RATIO > Math.abs(scrollDelta)) {
-			return;
-		}
-
-		// Ignore very small movements (sub-pixel noise from trackpad)
-		if (Math.abs(scrollDelta) < 1) {
-			return;
-		}
-
-		// The first horizontal event after an idle period starts a new gesture.
-		// Whether it may navigate is decided once and holds until it ends.
-		if (!this.gestureInProgress) {
-			this.beginGesture(event);
-		}
-
-		// Reset the idle timer on every wheel event (gesture is still active)
-		this.resetGestureIdleTimer();
-
-		const leaf = this.gestureLeaf;
-		if (!leaf) {
-			return;
-		}
-
-		const horizontalDelta = this.settings.invertDirection ? -scrollDelta : scrollDelta;
-
-		// Check velocity threshold to activate swipe gesture.
-		// Only activate if this is a fast swipe, not slow horizontal scrolling.
-		// MIN_VELOCITY_TO_ACTIVATE (25px) per single event filters out gentle
-		// horizontal panning (e.g. in graph view or wide tables).
-		if (!this.swipeActive) {
-			if (Math.abs(horizontalDelta) >= MIN_VELOCITY_TO_ACTIVATE) {
-				this.swipeActive = true;
-				this.log('Swipe activated (velocity threshold met)');
-				this.recorder.mark('swipe-activated');
-			} else {
-				return;
-			}
-		}
-
-		// Accumulate the delta
-		this.accumulatedDelta += horizontalDelta;
-
-		// Determine current swipe direction
-		const newDirection: NavigationDirection | null =
-			this.accumulatedDelta < 0 ? 'back' :
-			this.accumulatedDelta > 0 ? 'forward' : null;
-
-		// If direction changed, reset — allows cancelling a swipe by reversing.
-		// Hide the previous direction's indicator, it is no longer updated.
-		if (this.currentDirection && newDirection && this.currentDirection !== newDirection) {
-			this.resetSwipeState();
-			this.resetIndicators();
-			this.swipeActive = true;
-			this.accumulatedDelta = horizontalDelta;
-		}
-
-		this.currentDirection = newDirection;
-
-		// Check if navigation is possible for this direction
-		if (this.currentDirection && !this.canNavigate(leaf, this.currentDirection)) {
-			return;
-		}
-
-		// Calculate progress towards threshold.
-		// threshold = sensitivity × SWIPE_THRESHOLD_MULTIPLIER (default: 50 × 3 = 150px)
-		const threshold = this.settings.sensitivity * SWIPE_THRESHOLD_MULTIPLIER;
-		const progress = Math.abs(this.accumulatedDelta) / threshold;
-
-		// Update visual indicator
-		if (this.currentDirection) {
-			this.updateIndicator(this.currentDirection, progress);
-		}
-
-		// Track whether threshold is reached (navigation deferred to gesture end / finger lift)
-		const reached = progress >= 1;
-		if (reached !== this.thresholdReached) {
-			this.recorder.mark('threshold', { reached });
-		}
-		this.thresholdReached = reached;
 	}
 
-	private beginGesture(event: WheelEvent) {
+	/**
+	 * Called by the recognizer for the first event of every gesture, including
+	 * vertical scrolling. Decides once whether the gesture may navigate.
+	 */
+	private beginGesture(event: WheelEvent): boolean {
 		const start = evaluateGestureStart(this.app.workspace, event, this.settings.disabledViewTypes);
-		this.gestureInProgress = true;
 		this.gestureLeaf = start.leaf;
-
-		if (start.leaf) {
-			this.placeIndicators(start.leaf);
-		}
 
 		const details = { accepted: start.leaf !== null, reason: start.reason, viewType: start.viewType };
 		this.log('Gesture started', details);
 		this.recorder.mark('gesture-start', details);
+		return start.leaf !== null;
 	}
 
-	private resetSwipeState() {
-		this.accumulatedDelta = 0;
-		this.currentDirection = null;
-		this.swipeActive = false;
-		this.thresholdReached = false;
-	}
+	private onAxisLocked(axis: GestureAxis) {
+		this.log('Axis locked', { axis });
+		this.recorder.mark('axis', { axis });
 
-	// === Gesture Idle Detection ===
-
-	/**
-	 * Reset the idle timer. Called on every wheel event to keep the gesture alive.
-	 * When no wheel events arrive for GESTURE_IDLE_TIMEOUT (200ms), the gesture
-	 * is considered ended (finger lifted from trackpad).
-	 */
-	private resetGestureIdleTimer() {
-		this.clearGestureIdleTimer();
-		this.gestureIdleTimer = setTimeout(() => {
-			this.gestureIdleTimer = null;
-			this.onGestureEnd();
-		}, GESTURE_IDLE_TIMEOUT);
-	}
-
-	private clearGestureIdleTimer() {
-		if (this.gestureIdleTimer !== null) {
-			clearTimeout(this.gestureIdleTimer);
-			this.gestureIdleTimer = null;
+		if (axis === 'horizontal' && this.gestureLeaf) {
+			this.placeIndicators(this.gestureLeaf);
 		}
 	}
 
-	/**
-	 * Called when no wheel events have arrived for GESTURE_IDLE_TIMEOUT ms.
-	 * This approximates the "finger lifted" moment. Navigation only fires here,
-	 * not during the gesture — matching Safari's navigate-on-release behavior.
-	 */
-	private onGestureEnd() {
-		const details = { thresholdReached: this.thresholdReached, direction: this.currentDirection };
-		if (this.swipeActive) {
-			this.log('Gesture ended (idle timeout)', details);
-		}
-		this.recorder.mark('gesture-end', details);
+	private onSwipeProgress(direction: SwipeDirection | null, progress: number, ready: boolean) {
+		const leaf = this.gestureLeaf;
+		if (!leaf) return;
 
-		// Navigate only on release, and only if threshold was still reached.
-		// User can swipe back before releasing to cancel navigation.
-		if (this.gestureLeaf && this.thresholdReached && this.currentDirection) {
-			this.navigate(this.gestureLeaf, this.currentDirection);
+		// Crossing the start point: hide the previous direction's indicator, it is no longer updated
+		if (direction !== this.shownDirection) {
+			this.resetIndicators();
+			this.shownDirection = direction;
+		}
+
+		// Nothing to show without history in this direction
+		if (direction && this.canNavigate(leaf, direction)) {
+			this.updateIndicator(direction, progress, ready);
+		}
+
+		if (ready !== this.shownReady) {
+			this.shownReady = ready;
+			this.recorder.mark('threshold', { reached: ready });
+		}
+	}
+
+	/** Navigation only fires on release, matching Safari's navigate-on-release behavior. */
+	private onSwipeRelease(release: SwipeRelease) {
+		const details = {
+			reason: release.reason,
+			direction: release.direction,
+			navigate: release.navigate,
+			progress: round(release.progress),
+			velocity: round(release.velocity),
+		};
+		this.log('Swipe released', details);
+		this.recorder.mark('release', details);
+
+		const leaf = this.gestureLeaf;
+		if (release.navigate && release.direction && leaf && this.settings.enabled && this.canNavigate(leaf, release.direction)) {
+			this.navigate(leaf, release.direction);
 		}
 
 		// Smoothly animate indicators back to zero
 		this.animateIndicatorReset();
-		this.resetSwipeState();
-		this.gestureInProgress = false;
+		this.shownDirection = null;
+		this.shownReady = false;
+	}
+
+	private onGestureEnd() {
+		this.recorder.mark('gesture-end');
 		this.gestureLeaf = null;
 	}
 
-	private canNavigate(leaf: WorkspaceLeaf, direction: NavigationDirection): boolean {
+	private canNavigate(leaf: WorkspaceLeaf, direction: SwipeDirection): boolean {
 		const history = leaf.history;
 		if (!history) {
 			return true;
@@ -396,15 +318,36 @@ export default class SwipeNavigationPlugin extends Plugin {
 		}
 	}
 
+	// === Gesture Timing ===
+
+	/**
+	 * The recognizer only sees wheel events. This timer lets it notice pauses:
+	 * the release fallback while swiping, and the end of other gestures.
+	 */
+	private scheduleGestureTimer() {
+		this.clearGestureTimer();
+		const deadline = this.recognizer.deadline();
+		if (deadline === null) {
+			return;
+		}
+		this.gestureTimer = window.setTimeout(() => {
+			this.gestureTimer = null;
+			this.recognizer.tick(now());
+			this.scheduleGestureTimer();
+		}, Math.max(0, deadline - now()));
+	}
+
+	private clearGestureTimer() {
+		if (this.gestureTimer !== null) {
+			window.clearTimeout(this.gestureTimer);
+			this.gestureTimer = null;
+		}
+	}
+
 	// === Navigation ===
 
 	/** Navigate the swiped pane, which is not necessarily the focused one. */
-	private navigate(leaf: WorkspaceLeaf, direction: NavigationDirection) {
-		if (!this.checkCooldown(direction)) {
-			return;
-		}
-
-		this.lastSwipeTime = Date.now();
+	private navigate(leaf: WorkspaceLeaf, direction: SwipeDirection) {
 		this.recorder.mark('navigate', { direction });
 
 		const history = leaf.history;
@@ -425,18 +368,6 @@ export default class SwipeNavigationPlugin extends Plugin {
 			this.logWarn(`Navigation ${direction} failed - command not found`);
 			new Notice(`Swipe Navigation: Could not navigate ${direction}`);
 		}
-	}
-
-	private checkCooldown(direction: NavigationDirection): boolean {
-		const now = Date.now();
-		const timeSinceLastSwipe = now - this.lastSwipeTime;
-
-		if (timeSinceLastSwipe < SWIPE_COOLDOWN) {
-			this.log(`Navigate ${direction} blocked by cooldown (${timeSinceLastSwipe}ms < ${SWIPE_COOLDOWN}ms)`);
-			return false;
-		}
-
-		return true;
 	}
 
 	// === Gesture Recording ===
@@ -527,9 +458,15 @@ export default class SwipeNavigationPlugin extends Plugin {
 			disabledViewTypes: [...DEFAULT_SETTINGS.disabledViewTypes],
 			...saved,
 		};
+		this.recognizer.threshold = this.settings.sensitivity * SWIPE_THRESHOLD_MULTIPLIER;
 	}
 
 	async saveSettings() {
+		this.recognizer.threshold = this.settings.sensitivity * SWIPE_THRESHOLD_MULTIPLIER;
 		await this.saveData(this.settings);
 	}
+}
+
+function round(value: number): number {
+	return Math.round(value * 100) / 100;
 }

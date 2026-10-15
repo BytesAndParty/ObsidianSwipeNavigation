@@ -3,6 +3,7 @@ import {
 	GestureTrace, TraceMarker, TraceWheelEvent, TRACE_VERSION,
 	MOD_SHIFT, MOD_CTRL, MOD_ALT, MOD_META,
 } from './trace';
+import { absoluteEventTime, now } from './clock';
 
 // === Constants ===
 
@@ -36,6 +37,7 @@ export const RECORDING_SCENARIOS: RecordingScenario[] = [
 	{ id: 'back-cancel', name: 'Swipe back: cancel', instructions: 'Swipe back until the arrow appears, move back to the start without lifting, then lift. Repeat 3 times.' },
 	{ id: 'forward', name: 'Swipe forward', instructions: 'Normal two-finger swipe forward. Repeat 5 times.' },
 	{ id: 'vertical-scroll', name: 'Vertical scrolling', instructions: 'Scroll a long note up and down as usual, including fast flicks. About 15 seconds.' },
+	{ id: 'scroll-then-swipe', name: 'Scroll, then swipe back', instructions: 'Scroll down with a quick flick, then swipe back right away while the note is still moving. Repeat 5 times.' },
 	{ id: 'diagonal', name: 'Diagonal scrolling', instructions: 'Scroll vertically with sloppy, diagonal finger movement. About 15 seconds.' },
 	{ id: 'scroll-container', name: 'Wide code block or table', instructions: 'Scroll horizontally inside a wide code block or table, to both edges and beyond. About 15 seconds.' },
 	{ id: 'canvas-pan', name: 'Canvas panning', instructions: 'Pan around a Canvas with two fingers in all directions. About 15 seconds.' },
@@ -176,17 +178,6 @@ export async function saveTrace(app: App, pluginDir: string, trace: GestureTrace
 }
 
 // === Utilities ===
-
-// Absolute time in ms (epoch-based), comparable across the main window and pop-outs
-function now(): number {
-	return performance.timeOrigin + performance.now();
-}
-
-// event.timeStamp is relative to the time origin of the window the event came from
-function absoluteEventTime(event: Event): number {
-	const view = (event as UIEvent).view;
-	return (view ?? window).performance.timeOrigin + event.timeStamp;
-}
 
 function round(value: number): number {
 	return Math.round(value * 100) / 100;

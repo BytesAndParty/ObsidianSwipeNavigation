@@ -2,7 +2,7 @@
 
 Überblick über Ziel, Ursachen, Phasen und Entscheidungen. Die Checkliste mit dem Fortschritt steht in [TODO.md](TODO.md), die Findings sind dort als F1–F28 nummeriert.
 
-Stand: 2026-10-15. Phase 0 und 1 sind umgesetzt und committet, aber noch nicht am Gerät getestet, die Aufnahmen fehlen. Phase 2 und 3 werden jetzt vor den Aufnahmen gebaut (siehe Entscheidungen), ihre Parameter bleiben bis zur Auswertung vorläufig. Phase 4 ist offen.
+Stand: 2026-10-15. Phase 0 und 1 sind umgesetzt und committet, aber noch nicht am Gerät getestet, die Aufnahmen fehlen. Phase 2 ist umgesetzt und mit synthetischen Gesten getestet. Phase 3 folgt, beide vor den Aufnahmen (siehe Entscheidungen), ihre Parameter bleiben bis zur Auswertung vorläufig. Phase 4 ist offen.
 
 ## Ziel
 
@@ -42,7 +42,7 @@ Werte werden mit echten Aufnahmen eingestellt, nicht geschätzt.
   - Wie sieht das Momentum aus (Länge, Abnahme pro Event)? Unterscheidet es sich vom Abbremsen des Fingers?
   - Stimmen die Verhältnisse `wheelDeltaX / deltaX` aus dem Chromium-Quellcode auch am Gerät: macOS-Trackpad 3, Windows-Precision-Touchpad 1, Maus-Notch 120 pro Notch? Davon hängt die Maus-Erkennung ab (F26).
   - Wie unterscheiden sich die Deltas bei 60 und 120 Hz?
-- **Aufnahmeszenarien:** langsam zurück, schneller Flick, halten dann loslassen, abbrechen, vorwärts, vertikal scrollen, diagonal scrollen, breiter Codeblock, Canvas, Shift+Mausrad, horizontales Mausrad, 3-Finger-Swipe.
+- **Aufnahmeszenarien:** langsam zurück, schneller Flick, halten dann loslassen, abbrechen, vorwärts, vertikal scrollen, scrollen und sofort zurückwischen, diagonal scrollen, breiter Codeblock, Canvas, Shift+Mausrad, horizontales Mausrad, 3-Finger-Swipe.
 
 ### Phase 1: Schnelle Fixes (umgesetzt, Test am Gerät offen)
 
@@ -58,12 +58,12 @@ Werte werden mit echten Aufnahmen eingestellt, nicht geschätzt.
 - Kleinere Fehler: tote Sperre entfernt (F3), alter Indikator wird bei Richtungswechsel zurückgesetzt (F11), `log()` beachtet den Debug-Modus (F22), Überschriften über `setHeading()` (F23).
 - **Nachbesserung F26:** Die Maus-Erkennung hielt Trackpad-Events mit `deltaX` von ±40 oder ±80 für Mausrad-Notches, weil Chromium unter macOS `wheelDeltaX` als −3 × `deltaX` meldet. Windows-Precision-Touchpads melden −1 × `deltaX`, dort traf es `deltaX` von ±120. Ein Event gilt jetzt nur noch als Notch, wenn `wheelDeltaX` ein 120er-Vielfaches ist und das Verhältnis zu `deltaX` weder 3 noch 1 ist.
 
-### Phase 2: Neue Gesten-Erkennung (in Arbeit)
+### Phase 2: Neue Gesten-Erkennung (umgesetzt, Test am Gerät offen)
 
-Der Kern für das Gefühl. Eigene Klasse `GestureRecognizer` ohne DOM- und Obsidian-Abhängigkeit, gefüttert mit `{ t, dx, dy }`. Getestet mit `bun test`: jetzt mit synthetischen Gesten, sobald Aufnahmen da sind zusätzlich als Replay der Traces aus `test/fixtures/traces/`.
+Der Kern für das Gefühl. Eigene Klasse `GestureRecognizer` (`src/GestureRecognizer.ts`) ohne DOM- und Obsidian-Abhängigkeit, gefüttert mit `{ t, dx, dy }`. Getestet mit `bun test`: jetzt mit synthetischen Gesten, sobald Aufnahmen da sind zusätzlich als Replay der Traces aus `test/fixtures/traces/`.
 
 - **Zustände:** wartet → beobachtet → wischt (Achse horizontal gesperrt) oder abgelehnt → Entscheidung (auslösen oder abbrechen) → Ruhephase → wartet.
-- **Kontext** wie in Phase 1 einmal am Anfang der Geste. Eine abgelehnte Geste bleibt bis zu ihrem Ende abgelehnt, auch durch Momentum.
+- **Kontext** wie in Phase 1 einmal am Anfang der Geste, jetzt auch beim vertikalen Scrollen. Startet die Geste vertikal (`deltaX = 0`), lehnt schon horizontal scrollbarer Inhalt in beide Richtungen ab. Eine abgelehnte Geste bleibt bis zu ihrem Ende abgelehnt, auch durch Momentum.
 - **Achse** nach den ersten 12 px Bewegung festlegen und beibehalten: horizontal, wenn die horizontale Bewegung mindestens doppelt so groß ist wie die vertikale (F15). Vertikal heißt abgelehnt.
 - **Aktivierung mit der Achsensperre** statt über eine Mindestgeschwindigkeit. Gezählt wird ab dem ersten Event der Geste (F14).
 - **Weg ab Gesten-Beginn:** Fortschritt = Weg seit Gesten-Beginn / Schwelle. Ein Richtungswechsel über den Startpunkt hinweg wird ohne Zurücksetzen verrechnet (F27).
@@ -116,6 +116,7 @@ Später: Ab Chromium 151 gibt es `WheelEvent.momentum`, ein echtes Momentum-Sign
 - **Zoom (F28):** Chromium teilt alle Deltas durch den Seitenzoom. Bei 150 % Zoom braucht ein Swipe 1,5-mal so viel Fingerweg. Ein Ausgleich braucht eine verlässliche Quelle für Obsidians Zoomfaktor.
 - **Momentum-Erkennung ohne Aufnahmen.** Ein Finger, der vor dem Zurückwischen gleichmäßig abbremst, kann wie Momentum aussehen und zu früh auslösen. Bis zum Einstellen kann sich das Loslassen falsch anfühlen. Die Szenarien „abbrechen“ und „halten, dann loslassen“ sind dafür die wichtigsten Aufnahmen.
 - **Längerer Rückfall-Timeout** (400 ms) verzögert die Navigation, wenn der Finger erst still steht und dann ohne Momentum abhebt.
+- **Swipe direkt nach dem Scrollen.** Vertikales Scrollen ist jetzt eine eigene, abgelehnte Geste, die erst nach 150 ms ohne Events endet, Momentum eingeschlossen. Ein Swipe, der früher beginnt, wird geschluckt. Bewusst die sichere Seite: Ein Neustart bei horizontalen Events würde diagonales Scrollen wieder navigieren lassen (F15). Das Szenario „Scrollen, dann sofort zurückwischen“ misst die Lücke, danach wird die Pause oder eine Regel dafür eingestellt.
 - **Interne Obsidian-APIs** (`leaf.history`, `app.commands`) sind nicht offiziell dokumentiert. Dafür gibt es den Fallback über die Befehle `app:go-back` und `app:go-forward`.
 
 ## Grundlagen

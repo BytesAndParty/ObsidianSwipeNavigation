@@ -15,8 +15,8 @@ import { isLikelyMouseWheel } from '../src/input';
 const GESTURE_GAP_MS = 150;
 
 // Markers this long after a gesture's last event still belong to it
-// (gesture-end fires after the plugin's idle timeout)
-const MARKER_TAIL_MS = 400;
+// (a timeout release fires 400 ms after the last event, see GestureRecognizer.ts)
+const MARKER_TAIL_MS = 500;
 
 interface GestureRow {
 	'#': number;
@@ -126,6 +126,10 @@ function markerLabel(marker: TraceMarker): string {
 	switch (marker.type) {
 		case 'gesture-start':
 			return data.accepted ? `start(${data.viewType})` : `rejected(${data.reason})`;
+		case 'axis':
+			return `axis(${data.axis === 'horizontal' ? 'h' : 'v'})`;
+		case 'release':
+			return `${data.navigate ? 'COMMIT' : 'cancel'}(${data.reason})@${Math.round(marker.t)}`;
 		case 'navigate':
 			return `NAV ${data.direction}@${Math.round(marker.t)}`;
 		case 'threshold':
