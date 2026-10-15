@@ -1,4 +1,4 @@
-import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { Notice, Plugin, WorkspaceLeaf, normalizePath } from 'obsidian';
 import {
 	SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN,
 	MIN_DELTA_FOR_LOG, SWIPE_THRESHOLD_MULTIPLIER, MIN_VELOCITY_TO_ACTIVATE,
@@ -6,6 +6,7 @@ import {
 } from './types';
 import { SwipeNavigationSettingsTab } from './SettingsTab';
 import { evaluateGestureStart } from './context';
+import { GestureRecorder, RecordingScenario, ScenarioSuggestModal, saveTrace } from './GestureRecorder';
 
 // === Type Declarations for Obsidian Internal API ===
 
@@ -63,6 +64,10 @@ export default class SwipeNavigationPlugin extends Plugin {
 	private indicatorLeft: HTMLElement | null = null;
 	private indicatorRight: HTMLElement | null = null;
 
+	// Gesture recording (debug mode only)
+	private recorder = new GestureRecorder();
+	private recordingStatusEl: HTMLElement | null = null;
+
 	async onload() {
 		await this.loadSettings();
 
@@ -73,6 +78,8 @@ export default class SwipeNavigationPlugin extends Plugin {
 		this.app.workspace.onLayoutReady(() => this.attachToOpenWindows());
 		this.registerEvent(this.app.workspace.on('window-open', (_workspaceWindow, win) => this.attachToWindow(win)));
 		this.registerEvent(this.app.workspace.on('window-close', (_workspaceWindow, win) => this.detachFromWindow(win)));
+
+		this.registerRecordingCommands();
 
 		this.log('Plugin loaded');
 	}
@@ -203,6 +210,9 @@ export default class SwipeNavigationPlugin extends Plugin {
 	// === Two-Finger Swipe Detection ===
 
 	private handleWheelEvent(event: WheelEvent) {
+		// Record raw input before any filtering
+		this.recorder.record(event);
+
 		if (!this.settings.enabled) {
 			return;
 		}
@@ -257,6 +267,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 			if (Math.abs(horizontalDelta) >= MIN_VELOCITY_TO_ACTIVATE) {
 				this.swipeActive = true;
 				this.log('Swipe activated (velocity threshold met)');
+				this.recorder.mark('swipe-activated');
 			} else {
 				return;
 			}
@@ -297,7 +308,11 @@ export default class SwipeNavigationPlugin extends Plugin {
 		}
 
 		// Track whether threshold is reached (navigation deferred to gesture end / finger lift)
-		this.thresholdReached = progress >= 1;
+		const reached = progress >= 1;
+		if (reached !== this.thresholdReached) {
+			this.recorder.mark('threshold', { reached });
+		}
+		this.thresholdReached = reached;
 	}
 
 	private beginGesture(event: WheelEvent) {
@@ -311,6 +326,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 
 		const details = { accepted: start.leaf !== null, reason: start.reason, viewType: start.viewType };
 		this.log('Gesture started', details);
+		this.recorder.mark('gesture-start', details);
 	}
 
 	private resetSwipeState() {
@@ -352,6 +368,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 		if (this.swipeActive) {
 			this.log('Gesture ended (idle timeout)', details);
 		}
+		this.recorder.mark('gesture-end', details);
 
 		// Navigate only on release, and only if threshold was still reached.
 		// User can swipe back before releasing to cancel navigation.
@@ -388,6 +405,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 		}
 
 		this.lastSwipeTime = Date.now();
+		this.recorder.mark('navigate', { direction });
 
 		const history = leaf.history;
 		if (history && typeof history[direction] === 'function') {
@@ -419,6 +437,72 @@ export default class SwipeNavigationPlugin extends Plugin {
 		}
 
 		return true;
+	}
+
+	// === Gesture Recording ===
+
+	private registerRecordingCommands() {
+		this.addCommand({
+			id: 'start-gesture-recording',
+			name: 'Start gesture recording (debug)',
+			checkCallback: (checking) => {
+				if (!this.settings.debugMode || this.recorder.isRecording) return false;
+				if (!checking) {
+					new ScenarioSuggestModal(this.app, scenario => this.startRecording(scenario)).open();
+				}
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: 'stop-gesture-recording',
+			name: 'Stop gesture recording and save trace (debug)',
+			checkCallback: (checking) => {
+				if (!this.recorder.isRecording) return false;
+				if (!checking) {
+					void this.stopRecording();
+				}
+				return true;
+			},
+		});
+
+		// Shows when a navigation actually took effect, relative to the input
+		this.registerEvent(this.app.workspace.on('file-open', file => {
+			this.recorder.mark('file-open', { path: file?.path ?? null });
+		}));
+	}
+
+	private startRecording(scenario: RecordingScenario) {
+		this.recorder.start(scenario);
+
+		const statusEl = this.addStatusBarItem();
+		statusEl.addClass('swipe-nav-recording', 'mod-clickable');
+		statusEl.setText(`● REC ${scenario.name}`);
+		statusEl.setAttr('aria-label', 'Stop gesture recording and save trace');
+		statusEl.addEventListener('click', () => void this.stopRecording());
+		this.recordingStatusEl = statusEl;
+
+		new Notice(`Recording "${scenario.name}"\n\n${scenario.instructions}\n\nClick "● REC" in the status bar to stop.`, 10000);
+	}
+
+	private async stopRecording() {
+		this.recordingStatusEl?.remove();
+		this.recordingStatusEl = null;
+
+		const trace = this.recorder.stop({ settings: { ...this.settings }, pluginVersion: this.manifest.version });
+		if (!trace) return;
+
+		try {
+			const path = await saveTrace(this.app, this.pluginDir(), trace);
+			new Notice(`Trace saved (${trace.events.length} wheel events):\n${path}`);
+		} catch (error) {
+			this.logWarn('Could not save trace', error);
+			new Notice('Swipe Navigation: Could not save the trace, see the developer console');
+		}
+	}
+
+	private pluginDir(): string {
+		return this.manifest.dir ?? normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
 	}
 
 	// === Utilities ===

@@ -68,7 +68,7 @@ export class SwipeNavigationSettingsTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Debug mode')
-			.setDesc('Log swipe decisions to the developer console (Cmd+Opt+I)')
+			.setDesc('Log swipe decisions to the developer console (Cmd+Opt+I) and enable gesture recording: the commands "Start gesture recording" and "Stop gesture recording" save raw trackpad input as a trace file in the plugin folder.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.debugMode)
 				.onChange(async (value) => {

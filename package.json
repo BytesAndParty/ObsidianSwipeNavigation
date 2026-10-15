@@ -5,7 +5,8 @@
 	"main": "main.js",
 	"scripts": {
 		"dev": "bun run esbuild.config.mjs",
-		"build": "bun tsc -noEmit -skipLibCheck && bun run esbuild.config.mjs production"
+		"build": "bun tsc -noEmit -skipLibCheck && bun run esbuild.config.mjs production",
+		"analyze-traces": "bun scripts/analyze-traces.ts"
 	},
 	"keywords": [
 		"obsidian",
