@@ -2,7 +2,7 @@
 
 ## v1.1 Rework: Bugs, Handling & Feel
 
-Started 2026-10-14 after a code review. Findings are numbered F1–F25; the phases below reference them.
+Started 2026-10-14 after a code review. Findings are numbered F1–F28; the phases below reference them. Overview, order and decisions: [PLAN.md](PLAN.md).
 
 Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · `[x]` done · `[-]` obsolete
 
@@ -25,6 +25,9 @@ Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · 
 - [~] **F11 Reversing direction left the previous indicator visible.** Now reset on direction change.
 - [-] **F12 Silent fallback from three- to two-finger mode.** Obsolete with F4.
 - [~] **F13 Direction swapped with natural scrolling off** (Chromium does not expose `directionInvertedFromDevice`). New setting "Reverse swipe direction".
+- [~] **F26 Mouse heuristic rejects trackpad gestures.** Chromium reports a trackpad's `wheelDeltaX` as −3 × `deltaX` on macOS (40 px per 120-unit tick) and −1 × `deltaX` on Windows precision touchpads, so trackpad events with `deltaX` ±40/±80 (macOS) or ±120 (Windows) looked like mouse notches and the whole gesture was ignored. Now a 120-multiple only counts as a notch if its ratio to `deltaX` is neither 3 nor 1 (`src/input.ts`, shared with the analysis script). Still misses high-resolution mice and notches at a page zoom other than 100 %.
+- [ ] **F27 Reversing in one large event overshoots.** On a direction change the accumulated delta restarted at the last event's delta instead of the distance past the start point. → Phase 2 (offset from gesture start, no reset)
+- [ ] **F28 Swipe distance depends on Obsidian's zoom.** Chromium divides all deltas by the page zoom, so at 150 % a swipe needs 1.5 × the finger travel. Fix needs a reliable source for the zoom factor. → after the device test
 
 #### Handling & feel
 
@@ -42,7 +45,7 @@ Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · 
 - [x] **F22 `log()` ignored debug mode.** Now only logs with debug mode on.
 - [x] **F23 `h2` heading in the settings tab** (rejected in review). Uses `setHeading()` now.
 - [ ] **F24 Plugin ID contains "obsidian"**, which the community submission check rejects. → Phase 4
-- [ ] **F25 Stale docs.** README links the deleted `TEST.md` and `install-to-vault.sh`; `CLAUDE.md` points to a test vault that no longer exists. → Phase 4
+- [ ] **F25 Stale docs.** README links the deleted `TEST.md` and `install-to-vault.sh`; `CLAUDE.md` points to a test vault that no longer exists and describes the old architecture. `CLAUDE.md` updated 2026-10-15; README → Phase 4
 
 ### Phase 0: Measure
 
@@ -50,8 +53,10 @@ Tune with recorded input instead of guessing.
 
 - [x] Gesture recorder (debug mode): commands "Start gesture recording" / "Stop gesture recording", scenario picker, "● REC" in the status bar (click to stop), trace JSON saved to `<vault>/.obsidian/plugins/obsidian-swipe-navigation/traces/`
 - [x] Markers on the same clock: gesture start (accepted / rejected + reason), swipe activated, threshold, gesture end, navigate, file-open
+- [ ] Phase 2 markers: axis lock, release (reason, decision, velocity)
 - [x] `bun run analyze-traces <folder>`: one row per gesture (events, duration, Σdx/Σdy, max delta, event interval, zero-delta events, decaying tail, markers)
-- [ ] Install the build in a test vault
+- [x] Analysis shows the `wheelDeltaX / deltaX` ratio per gesture and counts notches with the F26 rule (F26)
+- [ ] Install the build in the test vault (`UnfilteredMe`, see PLAN.md); remove the stale `swipe-navigation` folder with the same plugin ID first
 - [ ] Record each scenario on the MacBook (also on an external 60 Hz display if available):
   - [ ] Swipe back: slow
   - [ ] Swipe back: quick flick
@@ -67,11 +72,12 @@ Tune with recorded input instead of guessing.
   - [ ] Three-finger swipe (expect exactly one `file-open` per swipe)
 - [ ] Windows Precision Touchpad recordings (if a machine is available)
 - [ ] Evaluate:
-  - [ ] Does Chromium send a zero-delta event when the fingers lift? (`zero` column) That would be a real release signal.
-  - [ ] Momentum tail: decay ratio per event and length, compared with finger movement
-  - [ ] Do trackpad gestures ever start with a 120-multiple `wheelDeltaX`? (validates the F8 heuristic)
+  - [x] Does Chromium send a zero-delta event when the fingers lift? macOS: no, the phase-ended event is dropped before JS (Chromium source, see PLAN.md). Windows: maybe a (0,0) event at fling begin (`zero` column in Windows traces).
+  - [ ] Momentum tail: decay ratio per event and length, compared with a finger that slows down (most important: "cancel" and "hold, then lift")
+  - [ ] Confirm the `wdx/dx` ratios from the Chromium source on real devices: macOS trackpad 3, Windows precision touchpad 1, mouse notches 120 per notch (validates the F8/F26 heuristic)
   - [ ] Deltas per event at 60 Hz vs. 120 Hz
 - [ ] Copy representative traces to `test/fixtures/traces/` for the Phase 2 replay tests
+- [ ] Tune the Phase 2 parameters with the replay tests
 
 ### Phase 1: Quick fixes (low risk)
 
@@ -87,6 +93,7 @@ Tune with recorded input instead of guessing.
 - [~] Pop-out windows: attach on `window-open`, detach on `window-close`, move the indicators into the swiped window (F9)
 - [x] Remove `navigationLocked` (F3); reset the previous indicator on direction change (F11)
 - [x] `log()` respects debug mode (F22); settings headings via `setHeading()` (F23)
+- [~] Mouse heuristic: a 120-multiple `wheelDeltaX` only counts as a notch if it is not 3 × `deltaX` (F26)
 - [ ] Device test pass:
   - [ ] Normal swipe back / forward still works
   - [ ] Split view: hovering the other pane navigates that pane, indicator at its edges
@@ -100,27 +107,34 @@ Tune with recorded input instead of guessing.
 
 ### Phase 2: New gesture engine (core of the feel)
 
-- [ ] Extract a DOM-free `GestureRecognizer` and test it with the recorded traces (`bun test`)
+Built before the recordings; all numbers are provisional until the traces are in (see PLAN.md).
+
+- [ ] DOM-free `GestureRecognizer` fed with `{ t, dx, dy }`, tested with synthetic gestures (`bun test`); replay test for `test/fixtures/traces/` that runs once traces exist
 - [ ] States: idle → tracking → swiping (axis locked) / rejected → commit / cancel → settle
-- [ ] Axis lock after the first 10–20 px of total movement (F15)
-- [ ] Activation by velocity in px/ms instead of a single-event delta; count the movement from the start of the gesture (F14)
-- [ ] Momentum detection (smoothly decaying deltas, like the *Lethargy* library) = "fingers lifted": decide immediately, swallow the rest of the momentum (F1)
-- [ ] Quick flick navigates below the distance threshold (like iOS)
-- [ ] Idle timeout only as a fallback, value taken from the traces (F2)
-- [ ] Cooldown only blocks repeats inside the same gesture; a deliberate second swipe still navigates (F18)
+- [ ] Context decided at the first event, a rejected gesture stays rejected until it ends (including momentum)
+- [ ] Axis lock after the first 12 px of total movement, horizontal if |Σdx| ≥ 2 × |Σdy| (F15)
+- [ ] Activation with the axis lock instead of a velocity threshold; count the movement from the start of the gesture (F14)
+- [ ] Offset from the gesture start, direction changes across the start point without reset (F27)
+- [ ] "Ready" with hysteresis: ready at 100 %, back off below 85 %
+- [ ] Momentum detection (≥ 4 smoothly decaying events after a peak) = "fingers lifted": decide with the state at the peak, swallow the rest (F1)
+- [ ] Quick flick navigates from 40 % with ≥ 1.5 px/ms (like iOS); flicking back always cancels
+- [ ] Idle timeout only as a fallback: 400 ms, so a short hold mid-swipe does not commit (F2)
+- [ ] No cooldown between gestures: a gesture navigates at most once, a deliberate second swipe navigates again (F18)
+- [ ] Remove the obsolete constants (`SWIPE_COOLDOWN`, `MIN_VELOCITY_TO_ACTIVATE`, `GESTURE_IDLE_TIMEOUT`)
 
 ### Phase 3: Safari-like feedback
 
 - [ ] Round indicator with an arrow icon that slides in with the finger, with rubber-band resistance (F16)
-- [ ] Short pop + accent fill at the threshold; hysteresis (ready at 100 %, back off below ~85 %)
+- [ ] Short pop + accent fill when "ready" (hysteresis from Phase 2)
 - [ ] Greyed out with strong resistance when there is no history
-- [ ] CSS variables + `transform`, updates batched per animation frame, arrow element cached (F17, F21)
-- [ ] Optional: content follows slightly, new note slides in after navigating; respect `prefers-reduced-motion` (F19)
+- [ ] `SwipeIndicator` class: CSS variables + `transform`, updates batched per animation frame, arrow element cached (F17, F21)
+- [ ] Respect `prefers-reduced-motion`
+- [ ] Optional, not in this round: content follows slightly, new note slides in after navigating (F19)
 
 ### Phase 4: Release
 
-- [ ] New plugin ID without "obsidian", e.g. `trackpad-swipe-navigation` (F24)
-- [ ] README, manifest description, `CLAUDE.md` (vault path, structure) (F25)
+- [ ] New plugin ID without "obsidian", e.g. `trackpad-swipe-navigation` (F24). Needs Robert's decision: the plugin folder, settings and trace path move
+- [ ] README, manifest description (F25)
 - [ ] Bump version, `versions.json`, `minAppVersion` check
 - [ ] Test matrix: macOS 60/120 Hz, natural scrolling on/off, Magic Mouse, Windows touchpad, mouse with Shift + wheel, split view, pop-out, Canvas, code block, modal
 - [ ] Push, GitHub release (main.js, manifest.json, styles.css), PR to obsidian-releases
