@@ -18,9 +18,10 @@
 }
 
 /* === Swipe Indicators === */
+/* Positioned at the swiped pane's edges via --swipe-nav-pane-* (set from main.ts) */
 .swipe-nav-indicator {
 	position: fixed;
-	top: 50%;
+	top: var(--swipe-nav-pane-center, 50%);
 	transform: translateY(-50%);
 	height: 80px;
 	width: 0;
@@ -33,13 +34,13 @@
 }
 
 .swipe-nav-indicator-left {
-	left: 0;
+	left: var(--swipe-nav-pane-left, 0);
 	background: linear-gradient(to right, var(--interactive-accent), transparent);
 	border-radius: 0 var(--radius-m) var(--radius-m) 0;
 }
 
 .swipe-nav-indicator-right {
-	right: 0;
+	right: var(--swipe-nav-pane-right, 0);
 	background: linear-gradient(to left, var(--interactive-accent), transparent);
 	border-radius: var(--radius-m) 0 0 var(--radius-m);
 }

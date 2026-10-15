@@ -1,16 +1,19 @@
-import { Notice, Plugin } from 'obsidian';
+import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
 import {
 	SwipeNavigationSettings, DEFAULT_SETTINGS, SWIPE_COOLDOWN,
 	MIN_DELTA_FOR_LOG, SWIPE_THRESHOLD_MULTIPLIER, MIN_VELOCITY_TO_ACTIVATE,
 	DIRECTION_RATIO, GESTURE_IDLE_TIMEOUT, DECAY_ANIMATION_DURATION
 } from './types';
 import { SwipeNavigationSettingsTab } from './SettingsTab';
+import { evaluateGestureStart } from './context';
 
 // === Type Declarations for Obsidian Internal API ===
 
 interface LeafHistory {
 	backHistory: unknown[];
 	forwardHistory: unknown[];
+	back(): Promise<void>;
+	forward(): Promise<void>;
 }
 
 declare module 'obsidian' {
@@ -19,11 +22,8 @@ declare module 'obsidian' {
 			executeCommandById(id: string): boolean;
 		};
 	}
-	interface Workspace {
-		activeLeaf: WorkspaceLeaf | null;
-	}
 	interface WorkspaceLeaf {
-		history: LeafHistory;
+		history?: LeafHistory;
 	}
 }
 
@@ -31,6 +31,7 @@ declare module 'obsidian' {
 
 type NavigationDirection = 'back' | 'forward';
 
+// Fallback if a leaf does not expose its history
 const NAVIGATION_COMMANDS: Record<NavigationDirection, string> = {
 	back: 'app:go-back',
 	forward: 'app:go-forward',
@@ -38,22 +39,25 @@ const NAVIGATION_COMMANDS: Record<NavigationDirection, string> = {
 
 // === Plugin ===
 
+// Three-finger swipes are not handled here: Obsidian's main process already
+// maps the macOS BrowserWindow 'swipe' event to history.back()/forward().
 export default class SwipeNavigationPlugin extends Plugin {
 	settings: SwipeNavigationSettings;
 	private lastSwipeTime: number = 0;
 
-	// Two-finger swipe state
-	private abortController: AbortController | null = null;
+	// Wheel listeners per window (main window and pop-outs)
+	private windowCleanups = new Map<Window, () => void>();
+	private readonly onWheel = (event: WheelEvent) => this.handleWheelEvent(event);
+
+	// Gesture state: a gesture lasts from its first horizontal wheel event
+	// until no wheel events arrive for GESTURE_IDLE_TIMEOUT
+	private gestureInProgress: boolean = false;
+	private gestureLeaf: WorkspaceLeaf | null = null; // null = rejected at gesture start
 	private accumulatedDelta: number = 0;
 	private currentDirection: NavigationDirection | null = null;
 	private swipeActive: boolean = false;
 	private thresholdReached: boolean = false;
-	private navigationLocked: boolean = false; // Blocks all input until gesture fully ends
 	private gestureIdleTimer: ReturnType<typeof setTimeout> | null = null;
-
-	// Three-finger swipe state (macOS only, via Electron BrowserWindow)
-	private electronWindow: any = null;
-	private swipeHandler: ((_event: unknown, direction: string) => void) | null = null;
 
 	// Visual indicator elements
 	private indicatorLeft: HTMLElement | null = null;
@@ -65,16 +69,45 @@ export default class SwipeNavigationPlugin extends Plugin {
 		this.addSettingTab(new SwipeNavigationSettingsTab(this.app, this));
 
 		this.createIndicators();
-		this.setupSwipeListener();
+		this.attachToWindow(window);
+		this.app.workspace.onLayoutReady(() => this.attachToOpenWindows());
+		this.registerEvent(this.app.workspace.on('window-open', (_workspaceWindow, win) => this.attachToWindow(win)));
+		this.registerEvent(this.app.workspace.on('window-close', (_workspaceWindow, win) => this.detachFromWindow(win)));
 
 		this.log('Plugin loaded');
 	}
 
 	onunload() {
-		this.teardownListeners();
+		this.windowCleanups.forEach(cleanup => cleanup());
+		this.windowCleanups.clear();
 		this.clearGestureIdleTimer();
 		this.removeIndicators();
 		this.log('Plugin unloaded');
+	}
+
+	// === Window Handling ===
+
+	private attachToWindow(win: Window) {
+		if (this.windowCleanups.has(win)) return;
+
+		win.document.addEventListener('wheel', this.onWheel, { passive: true });
+		this.windowCleanups.set(win, () => win.document.removeEventListener('wheel', this.onWheel));
+		this.log('Wheel listener attached', { popout: win !== window });
+	}
+
+	/** Pop-outs restored with the layout or open before the plugin was enabled */
+	private attachToOpenWindows() {
+		this.app.workspace.iterateAllLeaves(leaf => this.attachToWindow(leaf.view.containerEl.win));
+	}
+
+	private detachFromWindow(win: Window) {
+		this.windowCleanups.get(win)?.();
+		this.windowCleanups.delete(win);
+
+		// Rescue the indicators before the pop-out's document goes away
+		if (this.indicatorLeft?.doc === win.document) {
+			this.moveIndicatorsTo(document);
+		}
 	}
 
 	// === Visual Indicators ===
@@ -98,6 +131,27 @@ export default class SwipeNavigationPlugin extends Plugin {
 		this.indicatorRight?.remove();
 		this.indicatorLeft = null;
 		this.indicatorRight = null;
+	}
+
+	private moveIndicatorsTo(doc: Document) {
+		for (const indicator of [this.indicatorLeft, this.indicatorRight]) {
+			if (indicator && indicator.doc !== doc) {
+				doc.body.appendChild(indicator);
+			}
+		}
+	}
+
+	/** Show the indicators at the edges of the swiped pane, not the window. */
+	private placeIndicators(leaf: WorkspaceLeaf) {
+		const paneEl = leaf.view.containerEl;
+		const rect = paneEl.getBoundingClientRect();
+		this.moveIndicatorsTo(paneEl.doc);
+
+		for (const indicator of [this.indicatorLeft, this.indicatorRight]) {
+			indicator?.style.setProperty('--swipe-nav-pane-center', `${rect.top + rect.height / 2}px`);
+			indicator?.style.setProperty('--swipe-nav-pane-left', `${rect.left}px`);
+			indicator?.style.setProperty('--swipe-nav-pane-right', `${paneEl.win.innerWidth - rect.right}px`);
+		}
 	}
 
 	private updateIndicator(direction: NavigationDirection, progress: number) {
@@ -146,127 +200,20 @@ export default class SwipeNavigationPlugin extends Plugin {
 		}, DECAY_ANIMATION_DURATION);
 	}
 
-	/**
-	 * Brief flash of the indicator for discrete gestures (three-finger swipe)
-	 * where there is no progressive feedback.
-	 */
-	private flashIndicator(direction: NavigationDirection) {
-		this.updateIndicator(direction, 1);
-		this.animateIndicatorReset();
-	}
-
-	// === Swipe Listener Setup ===
-
-	/**
-	 * Initialize the appropriate swipe listener based on the current swipeMode setting.
-	 * Called on load and when the setting changes.
-	 */
-	setupSwipeListener() {
-		this.teardownListeners();
-
-		if (this.settings.swipeMode === 'three-finger') {
-			const success = this.setupThreeFingerSwipe();
-			if (!success) {
-				this.logWarn('Three-finger swipe not available, falling back to two-finger mode');
-				this.setupTwoFingerSwipe();
-			}
-		} else {
-			this.setupTwoFingerSwipe();
-		}
-	}
-
-	private teardownListeners() {
-		// Clean up two-finger listener
-		this.abortController?.abort();
-		this.abortController = null;
-		this.resetSwipeState();
-
-		// Clean up three-finger listener
-		this.removeThreeFingerSwipe();
-	}
-
-	// === Three-Finger Swipe (macOS only) ===
-
-	/**
-	 * Set up three-finger swipe via Electron's BrowserWindow 'swipe' event.
-	 * This is a macOS-only feature that fires for three-finger swipes when
-	 * the system preference "Swipe between pages" is set to "Swipe with
-	 * three fingers" or "Swipe with two or three fingers".
-	 *
-	 * Returns true if setup succeeded, false if Electron API is not available.
-	 */
-	private setupThreeFingerSwipe(): boolean {
-		try {
-			const electron = typeof window !== 'undefined' && (window as any).require ? (window as any).require('electron') : null;
-			const remote = electron?.remote;
-			const win = remote?.getCurrentWindow?.();
-
-			if (!win) {
-				this.logWarn('Three-finger swipe: Could not access BrowserWindow');
-				return false;
-			}
-
-			this.swipeHandler = (_event: unknown, direction: string) => {
-				if (!this.settings.enabled) return;
-
-				if (this.settings.debugMode) {
-					this.log('Three-finger swipe:', { direction });
-				}
-
-				// Electron's 'swipe' event uses 'left'/'right' for direction.
-				// 'left' means swipe-left = navigate back, 'right' = navigate forward.
-				if (direction === 'left') {
-					this.flashIndicator('back');
-					this.navigate('back');
-				} else if (direction === 'right') {
-					this.flashIndicator('forward');
-					this.navigate('forward');
-				}
-			};
-
-			win.on('swipe', this.swipeHandler);
-			this.electronWindow = win;
-			this.log('Three-finger swipe listener active');
-			return true;
-		} catch (e) {
-			this.logWarn('Three-finger swipe not available (Electron API inaccessible)', e);
-			return false;
-		}
-	}
-
-	private removeThreeFingerSwipe() {
-		if (this.electronWindow && this.swipeHandler) {
-			this.electronWindow.removeListener('swipe', this.swipeHandler);
-			this.electronWindow = null;
-			this.swipeHandler = null;
-		}
-	}
-
 	// === Two-Finger Swipe Detection ===
-
-	private setupTwoFingerSwipe() {
-		this.abortController = new AbortController();
-		const { signal } = this.abortController;
-
-		document.addEventListener('wheel', (event: WheelEvent) => {
-			this.handleWheelEvent(event);
-		}, { signal, passive: true });
-
-		this.log('Two-finger swipe listener active');
-	}
 
 	private handleWheelEvent(event: WheelEvent) {
 		if (!this.settings.enabled) {
 			return;
 		}
 
-		const horizontalDelta = event.deltaX;
+		const scrollDelta = event.deltaX;
 		const verticalDelta = Math.abs(event.deltaY);
 
 		// Debug logging (only when debugMode is enabled)
-		if (this.settings.debugMode && (Math.abs(horizontalDelta) > MIN_DELTA_FOR_LOG || verticalDelta > MIN_DELTA_FOR_LOG)) {
+		if (this.settings.debugMode && (Math.abs(scrollDelta) > MIN_DELTA_FOR_LOG || verticalDelta > MIN_DELTA_FOR_LOG)) {
 			this.log('Wheel event:', {
-				deltaX: horizontalDelta.toFixed(2),
+				deltaX: scrollDelta.toFixed(2),
 				deltaY: event.deltaY.toFixed(2),
 				accumulated: this.accumulatedDelta.toFixed(2),
 				active: this.swipeActive,
@@ -277,24 +224,30 @@ export default class SwipeNavigationPlugin extends Plugin {
 		// Require horizontal movement to dominate vertical by DIRECTION_RATIO (2.5:1).
 		// Chromium uses this ratio to distinguish intentional horizontal swipes from
 		// diagonal scrolling. A simple `>` comparison was too permissive.
-		if (verticalDelta * DIRECTION_RATIO > Math.abs(horizontalDelta)) {
+		if (verticalDelta * DIRECTION_RATIO > Math.abs(scrollDelta)) {
 			return;
 		}
 
 		// Ignore very small movements (sub-pixel noise from trackpad)
-		if (Math.abs(horizontalDelta) < 1) {
+		if (Math.abs(scrollDelta) < 1) {
 			return;
+		}
+
+		// The first horizontal event after an idle period starts a new gesture.
+		// Whether it may navigate is decided once and holds until it ends.
+		if (!this.gestureInProgress) {
+			this.beginGesture(event);
 		}
 
 		// Reset the idle timer on every wheel event (gesture is still active)
 		this.resetGestureIdleTimer();
 
-		// After a navigation fires, block all further input until the gesture
-		// fully ends (idle timeout = finger lifted). This prevents a single
-		// long/fast swipe from triggering multiple navigations.
-		if (this.navigationLocked) {
+		const leaf = this.gestureLeaf;
+		if (!leaf) {
 			return;
 		}
+
+		const horizontalDelta = this.settings.invertDirection ? -scrollDelta : scrollDelta;
 
 		// Check velocity threshold to activate swipe gesture.
 		// Only activate if this is a fast swipe, not slow horizontal scrolling.
@@ -303,9 +256,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 		if (!this.swipeActive) {
 			if (Math.abs(horizontalDelta) >= MIN_VELOCITY_TO_ACTIVATE) {
 				this.swipeActive = true;
-				if (this.settings.debugMode) {
-					this.log('Swipe activated (velocity threshold met)');
-				}
+				this.log('Swipe activated (velocity threshold met)');
 			} else {
 				return;
 			}
@@ -319,9 +270,11 @@ export default class SwipeNavigationPlugin extends Plugin {
 			this.accumulatedDelta < 0 ? 'back' :
 			this.accumulatedDelta > 0 ? 'forward' : null;
 
-		// If direction changed, reset — allows cancelling a swipe by reversing
+		// If direction changed, reset — allows cancelling a swipe by reversing.
+		// Hide the previous direction's indicator, it is no longer updated.
 		if (this.currentDirection && newDirection && this.currentDirection !== newDirection) {
 			this.resetSwipeState();
+			this.resetIndicators();
 			this.swipeActive = true;
 			this.accumulatedDelta = horizontalDelta;
 		}
@@ -329,7 +282,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 		this.currentDirection = newDirection;
 
 		// Check if navigation is possible for this direction
-		if (this.currentDirection && !this.canNavigate(this.currentDirection)) {
+		if (this.currentDirection && !this.canNavigate(leaf, this.currentDirection)) {
 			return;
 		}
 
@@ -345,6 +298,19 @@ export default class SwipeNavigationPlugin extends Plugin {
 
 		// Track whether threshold is reached (navigation deferred to gesture end / finger lift)
 		this.thresholdReached = progress >= 1;
+	}
+
+	private beginGesture(event: WheelEvent) {
+		const start = evaluateGestureStart(this.app.workspace, event, this.settings.disabledViewTypes);
+		this.gestureInProgress = true;
+		this.gestureLeaf = start.leaf;
+
+		if (start.leaf) {
+			this.placeIndicators(start.leaf);
+		}
+
+		const details = { accepted: start.leaf !== null, reason: start.reason, viewType: start.viewType };
+		this.log('Gesture started', details);
 	}
 
 	private resetSwipeState() {
@@ -364,6 +330,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 	private resetGestureIdleTimer() {
 		this.clearGestureIdleTimer();
 		this.gestureIdleTimer = setTimeout(() => {
+			this.gestureIdleTimer = null;
 			this.onGestureEnd();
 		}, GESTURE_IDLE_TIMEOUT);
 	}
@@ -381,58 +348,61 @@ export default class SwipeNavigationPlugin extends Plugin {
 	 * not during the gesture — matching Safari's navigate-on-release behavior.
 	 */
 	private onGestureEnd() {
-		if (this.settings.debugMode && this.swipeActive) {
-			this.log('Gesture ended (idle timeout)', {
-				thresholdReached: this.thresholdReached,
-				direction: this.currentDirection,
-			});
+		const details = { thresholdReached: this.thresholdReached, direction: this.currentDirection };
+		if (this.swipeActive) {
+			this.log('Gesture ended (idle timeout)', details);
 		}
 
 		// Navigate only on release, and only if threshold was still reached.
 		// User can swipe back before releasing to cancel navigation.
-		if (this.thresholdReached && this.currentDirection) {
-			this.navigate(this.currentDirection);
-			// Lock input until the gesture fully ends. This prevents a second
-			// navigation if the user keeps swiping after the first one fires.
-			this.navigationLocked = true;
+		if (this.gestureLeaf && this.thresholdReached && this.currentDirection) {
+			this.navigate(this.gestureLeaf, this.currentDirection);
 		}
 
 		// Smoothly animate indicators back to zero
 		this.animateIndicatorReset();
 		this.resetSwipeState();
-		// Clear the navigation lock — gesture is fully over, ready for the next one
-		this.navigationLocked = false;
+		this.gestureInProgress = false;
+		this.gestureLeaf = null;
 	}
 
-	private canNavigate(direction: NavigationDirection): boolean {
-		const leaf = this.app.workspace.activeLeaf;
-		if (!leaf?.history) {
+	private canNavigate(leaf: WorkspaceLeaf, direction: NavigationDirection): boolean {
+		const history = leaf.history;
+		if (!history) {
 			return true;
 		}
 
 		if (direction === 'back') {
-			return leaf.history.backHistory.length > 0;
+			return history.backHistory.length > 0;
 		} else {
-			return leaf.history.forwardHistory.length > 0;
+			return history.forwardHistory.length > 0;
 		}
 	}
 
 	// === Navigation ===
 
-	private navigate(direction: NavigationDirection) {
+	/** Navigate the swiped pane, which is not necessarily the focused one. */
+	private navigate(leaf: WorkspaceLeaf, direction: NavigationDirection) {
 		if (!this.checkCooldown(direction)) {
 			return;
 		}
 
 		this.lastSwipeTime = Date.now();
 
+		const history = leaf.history;
+		if (history && typeof history[direction] === 'function') {
+			this.log(`Navigating ${direction.toUpperCase()}`);
+			history[direction]().catch(error => this.logWarn(`Navigation ${direction} failed`, error));
+			return;
+		}
+
+		// The navigation commands act on the active leaf, so focus the swiped one first
+		this.app.workspace.setActiveLeaf(leaf, { focus: true });
 		const command = NAVIGATION_COMMANDS[direction];
 		const success = this.app.commands.executeCommandById(command);
 
 		if (success) {
-			if (this.settings.debugMode) {
-				this.log(`Navigating ${direction.toUpperCase()}`);
-			}
+			this.log(`Navigating ${direction.toUpperCase()} (via command)`);
 		} else {
 			this.logWarn(`Navigation ${direction} failed - command not found`);
 			new Notice(`Swipe Navigation: Could not navigate ${direction}`);
@@ -444,9 +414,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 		const timeSinceLastSwipe = now - this.lastSwipeTime;
 
 		if (timeSinceLastSwipe < SWIPE_COOLDOWN) {
-			if (this.settings.debugMode) {
-				this.log(`Navigate ${direction} blocked by cooldown (${timeSinceLastSwipe}ms < ${SWIPE_COOLDOWN}ms)`);
-			}
+			this.log(`Navigate ${direction} blocked by cooldown (${timeSinceLastSwipe}ms < ${SWIPE_COOLDOWN}ms)`);
 			return false;
 		}
 
@@ -456,6 +424,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 	// === Utilities ===
 
 	private log(message: string, data?: unknown) {
+		if (!this.settings.debugMode) return;
 		console.log('[SwipeNavigation]', message, data ?? '');
 	}
 
@@ -466,7 +435,14 @@ export default class SwipeNavigationPlugin extends Plugin {
 	// === Settings Management ===
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const saved = (await this.loadData()) ?? {};
+		// Left over from the removed three-finger mode
+		delete saved.swipeMode;
+		this.settings = {
+			...DEFAULT_SETTINGS,
+			disabledViewTypes: [...DEFAULT_SETTINGS.disabledViewTypes],
+			...saved,
+		};
 	}
 
 	async saveSettings() {

@@ -1,19 +1,22 @@
 // === Settings ===
 
-export type SwipeMode = 'two-finger' | 'three-finger';
-
 export interface SwipeNavigationSettings {
-	sensitivity: number;
 	enabled: boolean;
+	sensitivity: number;
+	invertDirection: boolean;
+	disabledViewTypes: string[];
 	debugMode: boolean;
-	swipeMode: SwipeMode;
 }
 
 export const DEFAULT_SETTINGS: SwipeNavigationSettings = {
-	sensitivity: 50,
 	enabled: true,
+	sensitivity: 50,
+	// Swap back/forward, e.g. for macOS with natural scrolling turned off.
+	// Chromium does not expose whether deltas are inverted from the device.
+	invertDirection: false,
+	// Views that pan with horizontal wheel input themselves
+	disabledViewTypes: ['canvas', 'graph', 'localgraph', 'excalidraw'],
 	debugMode: false,
-	swipeMode: 'two-finger', // default to two-finger (works cross-platform)
 };
 
 // === Constants ===
