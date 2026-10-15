@@ -1,30 +1,41 @@
 # Swipe Navigation for Obsidian
 
-Navigate back and forward through your note history using two-finger trackpad swipe gestures on desktop.
+Navigate back and forward through your note history with two-finger trackpad swipes on desktop, the way Safari does it.
 
 ## Features
 
-- **Two-finger swipe left** → Navigate back in history
-- **Two-finger swipe right** → Navigate forward in history
-- Adjustable sensitivity settings
-- Easy enable/disable toggle
-- Desktop-only (macOS, Windows, Linux)
+- **Swipe with two fingers** to go back or forward in the note history
+- **Safari-style feedback**: a round arrow slides in from the edge of the note as you swipe. Once it fills with the accent color, lifting your fingers navigates. Swipe back to cancel
+- **Quick flicks** navigate too, even when they are short
+- **The pane under the pointer** navigates, also in split view and pop-out windows, using that pane's own history
+- **Stays out of the way**:
+  - Wide code blocks and tables scroll first; swiping navigates only once they reach their edge
+  - Canvas, graph view and Excalidraw are excluded by default (configurable)
+  - No navigation over modals, menus or sidebars
+  - Vertical and diagonal scrolling never navigates
+  - Mouse wheels (including Shift + wheel and horizontal wheels) are ignored
+- Desktop only (macOS, Windows, Linux)
+
+### Three-finger swipes
+
+On macOS, three-finger swipes are built into Obsidian and need no plugin: set "Swipe between pages" to "Swipe with three fingers" or "Swipe with two or three fingers" in System Settings → Trackpad → More Gestures.
 
 ## Why This Plugin?
 
-Obsidian (being an Electron app) doesn't support native macOS/Windows trackpad gestures for navigation. This plugin brings that familiar browser-like navigation experience to Obsidian on desktop.
+Obsidian (being an Electron app) doesn't support two-finger trackpad swipes for navigation. This plugin brings that familiar browser-like navigation experience to Obsidian on desktop.
 
 There are **many feature requests** from the community ([1](https://forum.obsidian.md/t/two-finger-swipe-on-touchpad-to-go-back-go-forward-on-laptop-navigation-history/44414), [2](https://forum.obsidian.md/t/improve-history-navigation-on-mac-os/19847)) asking for this functionality - this plugin solves that problem.
 
 ## Compatibility
 
-| Platform | Support Level |
+| Device | Support |
 |----------|--------------|
-| **macOS with Trackpad** | ✅ Excellent - Native two-finger swipe gestures work perfectly |
-| **Windows Precision Touchpad** | ✅ Good - Modern laptops (Dell XPS, Surface, ThinkPad, etc.) |
-| **Older Windows Trackpads** | ⚠️ Limited - May not work on budget/older laptops |
-| **Linux** | ⚠️ Varies - Depends on trackpad driver and desktop environment |
-| **Desktop with Mouse** | ❌ Not Supported - Requires trackpad for swipe gestures |
+| **macOS trackpad** | ✅ Full support |
+| **Windows Precision Touchpad** | ✅ Modern laptops (Dell XPS, Surface, ThinkPad, etc.) |
+| **Older Windows trackpads** | ⚠️ Limited - may not work on budget/older laptops |
+| **Linux** | ⚠️ Varies - depends on trackpad driver and desktop environment |
+| **Magic Mouse** | ❔ Untested - Chromium reports it like a trackpad |
+| **Mouse wheel** | ➖ Ignored on purpose |
 
 ## Installation
 
@@ -34,7 +45,7 @@ There are **many feature requests** from the community ([1](https://forum.obsidi
 2. Search for "Swipe Navigation"
 3. Click Install, then Enable
 
-### Manual Installation (for development)
+### Manual Installation
 
 1. Download/clone this repository
 2. Run `bun install` to install dependencies
@@ -43,70 +54,50 @@ There are **many feature requests** from the community ([1](https://forum.obsidi
 5. Reload Obsidian
 6. Enable the plugin in Settings → Community Plugins
 
-**Quick Install Script:**
-```bash
-./install-to-vault.sh /path/to/your/vault
-```
-
-## Development
-
-This project uses [Bun](https://bun.sh) for faster builds and development.
-
-```bash
-# Install dependencies
-bun install
-
-# Start development mode (watches for changes and rebuilds)
-bun run dev
-
-# Build for production
-bun run build
-
-# Quick install to vault (builds and copies files)
-./install-to-vault.sh /path/to/your/vault
-```
-
-### Testing
-
-See [TEST.md](TEST.md) for comprehensive testing instructions and checklist.
-
 ## Settings
 
 - **Enable swipe navigation**: Toggle the plugin on/off
-- **Swipe sensitivity**: Adjust how far you need to swipe to trigger navigation (20-100, default: 50)
-- **Debug mode**: Enable console logging for troubleshooting (Developer section)
+- **Swipe sensitivity**: How far you need to swipe before lifting navigates (20-100, default 50; lower = shorter swipe)
+- **Reverse swipe direction**: Swap back and forward, e.g. if natural scrolling is turned off
+- **Disabled in views**: View types where swiping never navigates (default: `canvas, graph, localgraph, excalidraw`)
+- **Debug mode**: Logs swipe decisions to the developer console and enables gesture recording (see [DEVELOPMENT.md](DEVELOPMENT.md))
 
 ## How It Works
 
-The plugin listens to `wheel` events from your trackpad and detects horizontal scrolling (`deltaX`). When a horizontal swipe exceeds the sensitivity threshold, it triggers Obsidian's native `app:go-back` or `app:go-forward` commands.
+Electron gives plugins no access to native trackpad gestures, so the plugin reads the `wheel` events a two-finger swipe produces:
 
-### Technical Details
-
-- Uses `wheel` events with `deltaX` for horizontal gesture detection
-- Includes cooldown mechanism (300ms) to prevent double-triggers
-- Ignores events where vertical scrolling is dominant
-- Uses `AbortController` for clean event listener cleanup
-- Desktop-only (marked in manifest as `isDesktopOnly: true`)
+1. At the start of each gesture it checks once whether the gesture may navigate at all: which pane is under the pointer, whether that view is excluded, whether the content there can still scroll horizontally, and whether the input looks like a mouse wheel.
+2. After the first few pixels it locks the gesture to an axis. Vertical gestures are left alone.
+3. While you swipe, the arrow follows the distance from the start point. Swiping back past the start point cancels.
+4. Wheel events do not say when your fingers leave the trackpad, so the plugin infers it: smoothly slowing events are the trackpad's momentum after lifting, and a pause of 400 ms is the fallback. It then navigates if the arrow was filled or the swipe was a quick flick, and ignores the rest of the momentum.
 
 ## Limitations
 
-1. **Hardware-dependent**: Quality varies based on trackpad hardware and drivers
-2. **Not Magic Mouse**: macOS Magic Mouse gestures may behave differently than trackpad
-3. **Electron limitation**: No access to native OS gesture APIs, relies on wheel events
-4. **Horizontal scrolling conflict**: In rare cases, may interfere with intentional horizontal scrolling in graph view or wide tables
+1. **Lifting is inferred**, not reported by the system. A finger that slows down very evenly before swiping back can look like lifting. If you hold your fingers still and then lift, navigation waits for the 400 ms pause.
+2. **Right after scrolling vertically**, a swipe is ignored until the scrolling has come to rest for a moment.
+3. **Zoom**: at a zoom level other than 100 % the swipe distance changes with it.
+4. **Mouse detection** is a heuristic: high-resolution mice, and mouse wheels at a zoom other than 100 %, may not be recognized.
+5. **Hardware-dependent**: Quality varies with trackpad hardware and drivers.
 
 ## Troubleshooting
 
-**Swipes not working?**
-- Check if your trackpad supports two-finger horizontal swipes
-- Try adjusting sensitivity in settings
-- Verify the plugin is enabled
-- Check if you're using a Precision Touchpad (Windows Settings → Devices → Touchpad)
+**Swipes go the wrong way?**
+- Turn on "Reverse swipe direction" (needed with natural scrolling turned off)
+
+**Swiping does nothing in a certain view?**
+- Check "Disabled in views". With debug mode on, the developer console (Cmd+Opt+I) shows the view type when a swipe starts
+- Over a wide table or code block, scroll it to its edge first
 
 **Too sensitive / not sensitive enough?**
-- Adjust the sensitivity slider in plugin settings
-- Lower values = more sensitive
-- Higher values = requires longer swipe
+- Adjust the sensitivity slider: lower values need a shorter swipe
+
+**Not working at all?**
+- Check if your trackpad supports two-finger horizontal scrolling
+- On Windows, check for a Precision Touchpad (Settings → Devices → Touchpad)
+
+## Development
+
+See [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Works Well with Other BytesAndParty Plugins
 

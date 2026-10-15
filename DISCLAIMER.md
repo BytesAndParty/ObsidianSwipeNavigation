@@ -10,8 +10,8 @@ Since Obsidian is built on Electron, it **does not have access to native OS trac
 
 1. Listens to `wheel` events from your trackpad
 2. Detects horizontal scrolling (`deltaX`) caused by two-finger swipes
-3. When horizontal movement exceeds a threshold, triggers Obsidian's native navigation commands
-4. Uses a cooldown mechanism to prevent double-triggering
+3. Infers when your fingers leave the trackpad (the trackpad's momentum or a short pause), because wheel events do not report it
+4. Navigates the swiped pane's history if the swipe went far enough or was a quick flick, at most once per swipe
 
 This is a **workaround**, not a native gesture implementation.
 
@@ -72,11 +72,9 @@ This is a **workaround**, not a native gesture implementation.
 ### Potential Conflicts
 
 1. **Horizontal Scrolling Elements**
-   - May interfere with intentional horizontal scrolling in:
-     - Graph view panning
-     - Wide tables or code blocks
-     - Canvas mode
-   - **Workaround**: Temporarily disable the plugin, or adjust sensitivity higher
+   - Wide tables and code blocks scroll first; a swipe only navigates once they reach their edge
+   - Canvas, graph view and Excalidraw are excluded by default
+   - Other views that pan with horizontal scrolling may still navigate. **Workaround**: add their view type to "Disabled in views" (debug mode shows it in the console)
 
 2. **Diagonal Gestures**
    - Plugin ignores gestures that are more vertical than horizontal
@@ -84,9 +82,8 @@ This is a **workaround**, not a native gesture implementation.
    - This is intentional to avoid interfering with normal scrolling
 
 3. **Rapid Consecutive Swipes**
-   - Plugin has a 300ms cooldown between swipes
-   - This prevents accidental double-navigation
-   - Very fast swipes may be ignored
+   - Each swipe navigates at most once, its momentum is ignored
+   - A swipe started right after vertical scrolling is ignored until the scrolling has come to rest
 
 ### Why This Approach?
 
@@ -108,7 +105,7 @@ This is a **workaround**, not a native gesture implementation.
 ### Performance
 - **Minimal overhead**: Only listens to wheel events
 - **No polling**: Event-driven, runs only when you swipe
-- **Clean cleanup**: Uses `AbortController` to remove listeners on plugin unload
+- **Clean cleanup**: Removes its listeners from every window on plugin unload
 - **No memory leaks**: Properly cleans up all resources
 
 ### Privacy
@@ -137,8 +134,7 @@ This is a **workaround**, not a native gesture implementation.
 ### When to Disable
 
 Consider disabling this plugin if:
-- You frequently work with graph view and find it interfering
-- You do a lot of horizontal scrolling in wide tables
+- A view you use often pans with horizontal scrolling and is not in "Disabled in views" yet
 - You're using a desktop with mouse only
 - Your trackpad doesn't support the feature well
 
