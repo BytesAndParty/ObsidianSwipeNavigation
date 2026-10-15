@@ -1,0 +1,94 @@
+/* Phase 3 draft (PLAN.md): not loaded by Obsidian. Replaces the
+   "=== Swipe Indicators ===" block in styles.css once src/SwipeIndicator.ts
+   is wired into main.ts. */
+
+/* === Swipe Indicator === */
+/* Covers the swiped pane (--swipe-nav-pane-*, set per swipe) and clips the
+   circle to it. The circle follows the finger via --swipe-nav-x/-opacity/-scale,
+   set once per animation frame from SwipeIndicator.ts. */
+.swipe-nav-indicator {
+	display: none;
+	position: fixed;
+	top: var(--swipe-nav-pane-top, 0);
+	left: var(--swipe-nav-pane-left, 0);
+	width: var(--swipe-nav-pane-width, 100vw);
+	height: var(--swipe-nav-pane-height, 100vh);
+	overflow: hidden;
+	pointer-events: none;
+	z-index: 9999;
+}
+
+.swipe-nav-indicator.is-visible {
+	display: block;
+}
+
+.swipe-nav-indicator-circle {
+	--swipe-nav-size: 40px;
+	position: absolute;
+	top: 50%;
+	width: var(--swipe-nav-size);
+	height: var(--swipe-nav-size);
+	margin-top: calc(var(--swipe-nav-size) / -2);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 50%;
+	background: var(--background-primary);
+	color: var(--text-muted);
+	box-shadow: var(--shadow-s);
+	opacity: var(--swipe-nav-opacity, 0);
+	transform: translateX(var(--swipe-nav-x, 0px)) scale(var(--swipe-nav-scale, 0.7));
+	will-change: transform, opacity;
+}
+
+/* Starts just outside the pane edge and slides in */
+.swipe-nav-indicator.is-back .swipe-nav-indicator-circle {
+	left: calc(var(--swipe-nav-size) * -1);
+}
+
+.swipe-nav-indicator.is-forward .swipe-nav-indicator-circle {
+	right: calc(var(--swipe-nav-size) * -1);
+}
+
+.swipe-nav-indicator-icon {
+	display: flex;
+}
+
+.swipe-nav-indicator.is-forward .swipe-nav-indicator-icon {
+	transform: scaleX(-1);
+}
+
+/* Ready: navigates on release */
+.swipe-nav-indicator.is-ready .swipe-nav-indicator-circle {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	animation: swipe-nav-pop 180ms ease-out;
+}
+
+/* No history in this direction */
+.swipe-nav-indicator.is-disabled .swipe-nav-indicator-circle {
+	background: var(--background-secondary);
+	color: var(--text-faint);
+	box-shadow: none;
+}
+
+.swipe-nav-indicator.is-releasing .swipe-nav-indicator-circle {
+	transition: transform 0.25s ease-out, opacity 0.25s ease-out;
+}
+
+/* Uses the separate scale property so it adds to the transform above */
+@keyframes swipe-nav-pop {
+	50% {
+		scale: 1.15;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.swipe-nav-indicator.is-ready .swipe-nav-indicator-circle {
+		animation: none;
+	}
+
+	.swipe-nav-indicator.is-releasing .swipe-nav-indicator-circle {
+		transition: opacity 0.25s linear;
+	}
+}
