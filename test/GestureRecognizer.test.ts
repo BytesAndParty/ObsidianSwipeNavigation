@@ -451,6 +451,18 @@ describe('gestures and context', () => {
 			expect(result.starts).toBe(2);
 			expect(navigations(result)).toEqual(['back', 'back']);
 		});
+
+		test(`a swipe the other way after the fingers touched again navigates (F40, ${rate})`, () => {
+			// Touching stops the momentum, the next swipe follows after a pause (recorded: 43 and
+			// 46 ms). Here 45 ms (120 Hz) or 53 ms (60 Hz); without the pause it is the F39 reversal
+			const gesture = new Gesture(interval)
+				.stroke(-300, 0, 300, { until: 0.6, momentumMs: 200 })
+				.pause(20)
+				.stroke(400, 0, 400);
+			const result = run(gesture);
+			expect(result.starts).toBe(2);
+			expect(navigations(result)).toEqual(['back', 'forward']);
+		});
 	}
 
 	test('the old gesture ends before the context check of the new one', () => {

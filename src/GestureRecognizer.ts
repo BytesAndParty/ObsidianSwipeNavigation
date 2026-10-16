@@ -45,6 +45,12 @@ export interface GestureHandler {
 // Decay rates are given per 60 Hz frame (1000 / 60 ms), independent of the actual refresh rate
 const FRAME_MS = 1000 / 60;
 
+// Pause in the momentum before a swipe against it starts a new gesture (F40).
+// Recorded at 120 Hz: 43 and 46 ms between the last momentum event and the
+// next swipe. The F39 tests reverse after 25 ms (120 Hz) and 33 ms (60 Hz).
+// Provisional, belongs in RECOGNIZER_DEFAULTS once the parameters are tuned.
+const TOUCH_DOWN_PAUSE_MS = 40;
+
 // All values are provisional until tuned with recorded traces (PLAN.md, Phase 2)
 export const RECOGNIZER_DEFAULTS = {
 	axisLockDistance: 12,         // px of movement before the axis is decided
@@ -157,6 +163,10 @@ export class GestureRecognizer {
 				const carry = this.trailSinceMin - sample.dx;
 				this.endGesture();
 				this.startGesture(accept(), sample, interval, { carry, accelerated: true });
+			} else if (this.trailInterrupted(sample, interval)) {
+				// Fingers touched down and now swipe the other way: a new swipe from rest (F40)
+				this.endGesture();
+				this.startGesture(accept(), sample, interval);
 			}
 		} else if (this.state === 'rejected' && this.verticalGivesWay(sample, interval)) {
 			this.endGesture();
@@ -427,6 +437,16 @@ export class GestureRecognizer {
 	private trailReaccelerates(): boolean {
 		return this.trailRising >= 2
 			&& this.trailSpeed > this.trailMin * this.config.reaccelerationRatio + this.config.reaccelerationMinSpeed;
+	}
+
+	/**
+	 * Movement against the momentum after a pause: touching the trackpad stops
+	 * the momentum, and the new swipe only starts once the fingers moved. A
+	 * finger that reverses while resting on the trackpad sends events without
+	 * such a pause, so it still never starts a gesture (F39).
+	 */
+	private trailInterrupted(sample: WheelSample, interval: number): boolean {
+		return interval >= TOUCH_DOWN_PAUSE_MS && Math.sign(sample.dx) === -this.trailSign;
 	}
 
 	/**

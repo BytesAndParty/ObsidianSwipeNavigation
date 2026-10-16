@@ -42,13 +42,15 @@ Für alle, die hier weitermachen: Dieser Abschnitt sagt, wo die Arbeit steht, wa
 
 | # | Schritt | Wer | Abhängig von | Status |
 |---|---|---|---|---|
-| 1 | Build in den Test-Vault, Szenarien aufnehmen, Traces nach `test/fixtures/traces/` | Robert am Gerät | nichts | offen, blockiert 3 und 4 |
-| 2 | F35, F36, F38, F39 | Subagent | nichts | umgesetzt 2026-10-16, Gerätetest offen |
-| 3 | Die 3 roten Tests klären (mit Traces entscheiden, ob Test oder Code falsch ist) | Subagent | 1 | offen |
-| 4 | Parameter in `RECOGNIZER_DEFAULTS` mit den Replay-Tests einstellen, danach zweite Review-Runde | Subagent, Auswertung gemeinsam | 1, 3 | offen |
-| 5 | Phase 3: `SwipeIndicator` einbauen, Review | Subagent | 2 (Aufbau), Gerätetest nach 4 | offen |
+| 1 | Szenarien aufnehmen, Traces nach `test/fixtures/traces/` | Robert am Gerät | nichts | erste 5 Aufnahmen am 2026-10-16 ausgewertet (F41 bis F46). Neu aufnehmen: lange History (10+ Notizen), Hold, Vorwärts, 60 Hz |
+| 2 | F35, F36, F38, F39, F40 | Subagent | nichts | umgesetzt 2026-10-16, Gerätetest offen |
+| 3 | Release-Erkennung neu ausrichten (F41, F42, F43): Endsignatur des Momentums und Touch-down-Signatur statt Stufenverhältnis 0,85; die 3 roten Unit-Tests klären | Subagent, Review | 1 (60 Hz hilfreich, nicht zwingend) | offen, größte Baustelle |
+| 4 | Replay-Erwartungen pro Zeitfenster (F45), `analyze-traces` ohne (0,0)-Events (F44), Parameter einstellen, `TOUCH_DOWN_PAUSE_MS` nach `RECOGNIZER_DEFAULTS`, zweite Review-Runde | Subagent, Auswertung gemeinsam | 3 | offen |
+| 5 | Phase 3: `SwipeIndicator` einbauen, Review | Subagent | unabhängig von 3 und 4, Gerätetest danach | offen, kann parallel zu 3 laufen |
 | 6 | Phase-1-Gerätetest (Checkliste in TODO.md) | Robert | 5 | offen |
 | 7 | Phase 4: Plugin-ID entscheiden (F24), Version 1.1.0, Testmatrix, Release | Robert, Subagent | 6 | offen |
+
+Geparkt: Drei-Finger-Wischen (F46), von Robert am 2026-10-16 zurückgestellt.
 
 Danach, optional: F28 (Zoom), F19 (Übergangsanimation), `WheelEvent.momentum` ab Chromium 151.
 
