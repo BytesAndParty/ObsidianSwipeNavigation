@@ -47,7 +47,7 @@ Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · 
 - [x] **F22 `log()` ignored debug mode.** Now only logs with debug mode on.
 - [x] **F23 `h2` heading in the settings tab** (rejected in review). Uses `setHeading()` now.
 - [ ] **F24 Plugin ID contains "obsidian"**, which the community submission check rejects. → Phase 4
-- [x] **F25 Stale docs.** README links the deleted `TEST.md` and `install-to-vault.sh`; `CLAUDE.md` points to a test vault that no longer exists and describes the old architecture. Updated 2026-10-15: README, DEVELOPMENT.md, DISCLAIMER.md, manifest description, `CLAUDE.md` (not committed on purpose).
+- [x] **F25 Stale docs.** README links the deleted `TEST.md` and `install-to-vault.sh`; `CLAUDE.md` points to a test vault that no longer exists and describes the old architecture. Updated 2026-10-15: README, DEVELOPMENT.md, DISCLAIMER.md, manifest description, `CLAUDE.md`.
 
 #### Review of Phase 2 (2026-10-15)
 

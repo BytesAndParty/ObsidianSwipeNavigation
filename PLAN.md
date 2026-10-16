@@ -21,7 +21,7 @@ Für alle, die hier weitermachen: Dieser Abschnitt sagt, wo die Arbeit steht, wa
 - **Nichts ist am Gerät getestet**, es gibt noch keine Aufnahmen. Alle Parameter sind Schätzungen.
 - Das Plugin nutzt schon die neue Erkennung aus Phase 2. Der neue Indikator aus Phase 3 liegt als Entwurf in `src/SwipeIndicator.ts` und `src/SwipeIndicator.draft.css`. `main.ts` steuert noch den alten Indikator.
 - README und DEVELOPMENT.md beschreiben schon den Zielzustand inklusive des neuen Indikators.
-- `CLAUDE.md` und `.claude/` sind absichtlich nicht committet (lokale Pfade, Rechte). `CLAUDE.md` ist auf dem Stand dieser Runde.
+- `CLAUDE.md` ist committet und auf dem Stand dieser Runde. Die lokalen Rechte in `.claude/` stehen in `.gitignore`.
 
 ### Wie weitermachen
 
