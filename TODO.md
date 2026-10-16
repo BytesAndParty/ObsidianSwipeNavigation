@@ -2,7 +2,9 @@
 
 ## v1.1 Rework: Bugs, Handling & Feel
 
-Started 2026-10-14 after a code review. Findings are numbered F1–F28; the phases below reference them. Overview, order and decisions: [PLAN.md](PLAN.md).
+Started 2026-10-14 after a code review. Findings are numbered F1–F39; the phases below reference them. Overview, order and decisions: [PLAN.md](PLAN.md).
+
+**Handover 2026-10-15 (evening):** everything is committed on `main` (not pushed). Build green, `bun test` 47 of 50 green. Phase 2 is work in progress, Phase 3 is a draft, nothing is tested on a device yet. Where things stand, what was tried and how to continue: [PLAN.md → Übergabe](PLAN.md#übergabe-stand-2026-10-15-abends).
 
 Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · `[x]` done · `[-]` obsolete
 
@@ -12,7 +14,7 @@ Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · 
 
 #### Bugs
 
-- [~] **F1 Momentum delays and forces navigation.** After lifting, macOS keeps sending inertial wheel events for up to ~1 s. They extend the idle timer and add to the distance: navigation fires late, short swipes still trigger, cancelling barely works. Now: smoothly decaying deltas after a peak count as "fingers lifted", the decision uses the state at the peak and the rest of the momentum is swallowed.
+- [~] **F1 Momentum delays and forces navigation.** After lifting, macOS keeps sending inertial wheel events for up to ~1 s. They extend the idle timer and add to the distance: navigation fires late, short swipes still trigger, cancelling barely works. Now: the release is inferred from the shape of the speed (one speed step freezes the swipe, a second step of equal duration confirms momentum), the frozen state decides and the rest of the momentum is swallowed. See F29 and PLAN.md for the history.
 - [~] **F2 Pausing mid-swipe commits.** Holding the fingers still for >200 ms counts as release; moving back afterwards starts a new gesture that may navigate the other way. Now: the idle timeout is only a 400 ms fallback.
 - [x] **F3 `navigationLocked` was dead code**: set and cleared in the same function. Removed.
 - [x] **F4 Three-finger mode navigated twice.** Obsidian's main process already maps the `BrowserWindow` `swipe` event to `history.back()`/`forward()`, which Obsidian routes to the active leaf's history (confirmed in `obsidian.asar`, Obsidian 1.14.4). Mode removed, settings now explain the built-in macOS option.
@@ -33,19 +35,35 @@ Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · 
 
 - [~] **F14 Activation needs one event with ≥25 px.** Depends on the refresh rate (120 Hz → half the delta per event); slow deliberate swipes never activate; deltas before activation are lost. Now: the swipe activates with the axis lock and counts from the first event.
 - [~] **F15 No axis lock.** The 2.5:1 ratio is checked per event, so diagonal swipes flicker in and out. Now: the axis is locked after 12 px for the whole gesture.
-- [ ] **F16 Weak indicator feedback.** Linear opacity (barely visible at 30 %), arrow only at 100 %, no resistance past the threshold, no hysteresis (ready state flickers), no feedback when there is no history. → Phase 3
-- [ ] **F17 `animating` class stays for 250 ms**, so a gesture started right after the previous one lags behind. → Phase 3
+- [ ] **F16 Weak indicator feedback.** Linear opacity (barely visible at 30 %), arrow only at 100 %, no resistance past the threshold, no hysteresis (ready state flickers), no feedback when there is no history. Hysteresis done in Phase 2; the rest is drafted in `src/SwipeIndicator.ts`, not wired yet. → Phase 3
+- [ ] **F17 `animating` class stays for 250 ms**, so a gesture started right after the previous one lags behind. Drafted in `src/SwipeIndicator.ts`. → Phase 3
 - [~] **F18 Cooldown silently drops a quick second swipe** although the indicator showed "ready". Now: no cooldown, a gesture navigates at most once.
 - [ ] **F19 No transition after navigating**; content just swaps. → Phase 3 (optional)
 
 #### Code & release
 
 - [x] **F20 Deprecated `workspace.activeLeaf`.** No longer used; the pane comes from the event target.
-- [ ] **F21 Inline styles and `querySelector` on every wheel event**; `width` forces layout. Use CSS variables + `transform`, batch per frame. → Phase 3
+- [ ] **F21 Inline styles and `querySelector` on every wheel event**; `width` forces layout. Use CSS variables + `transform`, batch per frame. Drafted in `src/SwipeIndicator.ts`. → Phase 3
 - [x] **F22 `log()` ignored debug mode.** Now only logs with debug mode on.
 - [x] **F23 `h2` heading in the settings tab** (rejected in review). Uses `setHeading()` now.
 - [ ] **F24 Plugin ID contains "obsidian"**, which the community submission check rejects. → Phase 4
-- [ ] **F25 Stale docs.** README links the deleted `TEST.md` and `install-to-vault.sh`; `CLAUDE.md` points to a test vault that no longer exists and describes the old architecture. `CLAUDE.md` updated 2026-10-15; README → Phase 4
+- [x] **F25 Stale docs.** README links the deleted `TEST.md` and `install-to-vault.sh`; `CLAUDE.md` points to a test vault that no longer exists and describes the old architecture. Updated 2026-10-15: README, DEVELOPMENT.md, DISCLAIMER.md, manifest description, `CLAUDE.md` (not committed on purpose).
+
+#### Review of Phase 2 (2026-10-15)
+
+Found by an independent subagent review of the first recognizer version; F29 was a blocker.
+
+- [~] **F29 Finger deceleration taken as momentum.** The first version treated any 4 decreasing deltas after a peak as momentum. Deliberate swipes cancelled (a 220 px stroke, a steady 400 px swipe at 120 Hz), and cancels navigated twice: the reversal started a new gesture that navigated the other way. Now (v3): one speed step only freezes the swipe, a second step of equal duration confirms momentum, anything else resumes the swipe. A reversal during settling does not start a gesture while it speeds up (gap: F39). 3 recognizer tests still fail, see PLAN.md.
+- [~] **F30 Indicator showed "ready", the release cancelled.** Momentum events added to the offset before they were detected; the decision then used the earlier peak. Now the decision uses the frozen state, which is exactly the progress shown last (test "the decision always matches the progress shown last").
+- [~] **F31 A second swipe during momentum was swallowed.** Ending the settling phase needed one event of ≥ 4 px and > 1.5 × the previous one; a smooth ramp never met that. Now two rises in a row above 1.25 × the slowest momentum + 0.05 px/ms start a new gesture, which takes along the movement since the low point. Tests at 60 and 120 Hz.
+- [~] **F32 Parameters per event depended on the refresh rate.** A minimum peak of 4 px per event meant swipes slower than 0.48 px/ms at 120 Hz never counted as momentum, so momentum pushed them over the threshold. Now all parameters are in ms and px/ms. Slow swipes with integer deltas (4–5 px per event) remain noisy.
+- [~] **F33 A swipe right after vertical scrolling was swallowed.** The swipe's own events kept the rejected vertical gesture alive, so a longer gap would not have helped; the old version allowed it. Now a clearly horizontal event (≥ 2 px, ≥ 2:1) starts a new gesture after a pause of ≥ 50 ms or once the vertical speed fell to ≤ 50 % of its peak. A swipe into fast vertical momentum is still swallowed until it slows down.
+- [~] **F34 Double navigation after a blocked main thread.** Chromium coalesces queued wheel events; a coalesced momentum event counted as re-acceleration and started a second swipe. The gesture timer can also end a gesture before queued events are dispatched. Now a new gesture must speed up beyond 1.2 × its first event's speed (delta / time since the previous event) before it can swipe, and settling needs two rises in a row. Tests for both cases.
+- [ ] **F35 Context check on a vertical first event is too strict.** With `deltaX = 0` at the gesture start, horizontally scrollable content rejects the gesture in both directions. The old version accepted it at the left edge, and Chromium latches a vertical start to a vertical scroller anyway. Fix: skip the scroll-container check when `deltaX` is 0 (`canScrollHorizontally` in `src/context.ts`).
+- [ ] **F36 Gesture timer runs on the main window.** If the main window is hidden while the user works in a pop-out, background throttling can delay the release by about 1 s. Fix: `setTimeout` on the event's window (`scheduleGestureTimer` in `src/main.ts`, release timer in `SwipeIndicator`).
+- [~] **F37 Tests passed for the wrong reason.** Nearly all used constant speeds with instant stops and reversals. Rewritten with minimum-jerk finger strokes, geometric momentum, integer deltas with carry, speed jitter, 60/120 Hz, coalesced events, the timer path and the callback order. Real traces are still missing.
+- [ ] **F38 `analyze-traces` assigns markers to two rows.** The 500 ms marker tail is not capped at the next gesture, and the 150 ms split cuts one recognizer gesture (a hold under 400 ms) into two rows.
+- [ ] **F39 A reversal during settling can still start a gesture.** The speed along the momentum turns negative during a reversal; when the reversal slows down, two rises in a row count as re-acceleration and start a gesture in the opposite direction, which can navigate if it covers the threshold. Fix idea: clamp the speed along the momentum at 0 in `followTrail`, and add a test (misdetected release followed by a long reversal). Found while writing the handover.
 
 ### Phase 0: Measure
 
@@ -108,36 +126,49 @@ Tune with recorded input instead of guessing.
 
 ### Phase 2: New gesture engine (core of the feel)
 
-Built before the recordings; all numbers are provisional until the traces are in (see PLAN.md).
+Built before the recordings; all numbers are provisional until the traces are in. Current design and history: PLAN.md, Phase 2 and Übergabe.
 
-- [~] DOM-free `GestureRecognizer` fed with `{ t, dx, dy }`, tested with synthetic gestures (`bun test`); replay test for `test/fixtures/traces/` that runs once traces exist
-- [~] States: idle → tracking → swiping (axis locked) / rejected → commit / cancel → settle
-- [~] Context decided at the first event, a rejected gesture stays rejected until it ends (including momentum)
+- [~] DOM-free `GestureRecognizer` fed with `{ t, dx, dy }`, wired into `main.ts` (callbacks `axis`, `progress`, `release`, `end`; timer calls `tick()`)
+- [~] States: idle → tracking → swiping (axis locked) / rejected → releasing (pending, display frozen) → commit / cancel → settling
+- [~] Context decided at the first event of every gesture, a rejected gesture stays rejected until it ends (including momentum)
 - [~] Axis lock after the first 12 px of total movement, horizontal if |Σdx| ≥ 2 × |Σdy| (F15)
-- [~] Activation with the axis lock instead of a velocity threshold; count the movement from the start of the gesture (F14)
+- [~] Activation with the axis lock instead of a velocity threshold, counted from the first event (F14); a new gesture must speed up first (F34)
 - [~] Offset from the gesture start, direction changes across the start point without reset (F27)
 - [~] "Ready" with hysteresis: ready at 100 %, back off below 85 %
-- [~] Momentum detection (≥ 4 smoothly decaying events after a peak) = "fingers lifted": decide with the state at the peak, swallow the rest (F1)
-- [~] Quick flick navigates from 40 % with ≥ 1.5 px/ms (like iOS); flicking back always cancels
+- [~] Release v3: equal speed steps (peak → 80 % → 64 %, interpolated), second step ≥ 0.85 × the first confirms momentum, otherwise resume; decision on the frozen state (F1, F29, F30)
+- [~] Flick from 40 % with ≥ 1.5 px/ms, measured as the fastest velocity since the last change of direction; flicking back always cancels
 - [~] Idle timeout only as a fallback: 400 ms, so a short hold mid-swipe does not commit (F2)
-- [~] No cooldown between gestures: a gesture navigates at most once, a deliberate second swipe navigates again (F18)
-- [x] Remove the obsolete constants (`SWIPE_COOLDOWN`, `MIN_VELOCITY_TO_ACTIVATE`, `GESTURE_IDLE_TIMEOUT`)
+- [~] Settling: momentum swallowed until a 150 ms pause; two rises in a row start a new gesture with the movement since the low point; a single jump does not (F18, F31, F34)
+- [~] Vertical scrolling gives way to a clearly horizontal event after a pause or once it slowed down (F33)
+- [x] Remove the obsolete constants (`SWIPE_COOLDOWN`, `MIN_VELOCITY_TO_ACTIVATE`, `DIRECTION_RATIO`, `GESTURE_IDLE_TIMEOUT`)
+- [x] Realistic synthetic tests (F37); replay test for `test/fixtures/traces/` that runs once traces exist
+- [ ] Fix the 3 failing tests (analysis and ideas in PLAN.md → Übergabe)
+- [ ] Fix F35, F36, F38, F39
+- [ ] Tune the parameters with recorded traces until the replay tests pass
+- [ ] Second review round by an independent subagent
 
 ### Phase 3: Safari-like feedback
 
-- [ ] Round indicator with an arrow icon that slides in with the finger, with rubber-band resistance (F16)
-- [ ] Short pop + accent fill when "ready" (hysteresis from Phase 2)
-- [ ] Greyed out with strong resistance when there is no history
-- [ ] `SwipeIndicator` class: CSS variables + `transform`, updates batched per animation frame, arrow element cached (F17, F21)
-- [ ] Respect `prefers-reduced-motion`
+Drafted in `src/SwipeIndicator.ts` and `src/SwipeIndicator.draft.css`, not wired into `main.ts` yet. Steps: PLAN.md → Übergabe → Phase 3 einbauen.
+
+- [x] Draft: round indicator with an arrow icon that slides in from the edge of the swiped pane, with rubber-band resistance (F16)
+- [x] Draft: short pop + accent fill when "ready" (hysteresis from Phase 2)
+- [x] Draft: greyed out with strong resistance when there is no history
+- [x] Draft: `SwipeIndicator` class with CSS variables + `transform`, updates batched per animation frame, icon created once, a new swipe takes over a running release animation (F17, F21)
+- [x] Draft: respect `prefers-reduced-motion`
+- [ ] Wire `SwipeIndicator` into `main.ts`, replace the indicator block in `styles.css`, delete the draft CSS file
+- [ ] Release timer on the swiped window (F36)
+- [ ] Review by an independent subagent
+- [ ] Check on the device: light and dark theme, reduced motion, split view, pop-out, no history
 - [ ] Optional, not in this round: content follows slightly, new note slides in after navigating (F19)
 
 ### Phase 4: Release
 
 - [ ] New plugin ID without "obsidian", e.g. `trackpad-swipe-navigation` (F24). Needs Robert's decision: the plugin folder, settings and trace path move
-- [ ] README, manifest description (F25)
-- [ ] Bump version, `versions.json`, `minAppVersion` check
-- [ ] Test matrix: macOS 60/120 Hz, natural scrolling on/off, Magic Mouse, Windows touchpad, mouse with Shift + wheel, split view, pop-out, Canvas, code block, modal
+- [x] README, DEVELOPMENT.md, DISCLAIMER.md, manifest description (F25)
+- [x] `minAppVersion` check: 1.0.0 still fits (newest API used: `setActiveLeaf(leaf, params)`, 0.16.3)
+- [ ] Bump the version to 1.1.0 in `manifest.json`, `package.json` and `versions.json`
+- [ ] Test matrix: macOS 60/120 Hz, natural scrolling on/off, Magic Mouse, Windows touchpad, mouse with Shift + wheel, split view, pop-out, Canvas, code block, modal, zoom other than 100 % (F28)
 - [ ] Push, GitHub release (main.js, manifest.json, styles.css), PR to obsidian-releases
 - [ ] Demo GIF (optional)
 
