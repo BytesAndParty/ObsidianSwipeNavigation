@@ -80,11 +80,16 @@ function isSidebarLeaf(workspace: Workspace, leaf: WorkspaceLeaf): boolean {
 
 /**
  * Whether any element between the target and the pane boundary can still
- * scroll in the direction of scrollDelta, or in either direction if it is 0
- * (gesture started vertically). Like Safari, swiping only navigates once the
- * content under the pointer has reached its edge.
+ * scroll in the direction of scrollDelta. Like Safari, swiping only navigates
+ * once the content under the pointer has reached its edge.
  */
 function canScrollHorizontally(target: Node, boundary: HTMLElement, scrollDelta: number): boolean {
+	// A gesture that starts vertically latches to a vertical scroller (Chromium's
+	// scroll latching), so horizontally scrollable content does not scroll (F35)
+	if (scrollDelta === 0) {
+		return false;
+	}
+
 	let el: Element | null = target.instanceOf(Element) ? target : target.parentElement;
 	while (el) {
 		if (isScrollableTowards(el, scrollDelta)) {
@@ -113,9 +118,6 @@ function isScrollableTowards(el: Element, scrollDelta: number): boolean {
 	const distanceFromStart = Math.abs(el.scrollLeft);
 	const canScrollTowardsStart = distanceFromStart > SCROLL_EPSILON;
 	const canScrollTowardsEnd = distanceFromStart < maxScroll - SCROLL_EPSILON;
-	if (scrollDelta === 0) {
-		return canScrollTowardsStart || canScrollTowardsEnd;
-	}
 	const towardsEnd = style.direction === 'rtl' ? scrollDelta < 0 : scrollDelta > 0;
 	return towardsEnd ? canScrollTowardsEnd : canScrollTowardsStart;
 }

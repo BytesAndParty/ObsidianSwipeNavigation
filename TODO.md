@@ -6,6 +6,8 @@ Started 2026-10-14 after a code review. Findings are numbered F1–F39; the phas
 
 **Handover 2026-10-15 (evening):** everything is committed on `main` (not pushed). Build green, `bun test` 47 of 50 green. Phase 2 is work in progress, Phase 3 is a draft, nothing is tested on a device yet. Where things stand, what was tried and how to continue: [PLAN.md → Übergabe](PLAN.md#übergabe-stand-2026-10-15-abends).
 
+**2026-10-16:** F35, F36, F38 and F39 implemented, device test pending. `bun test` 54 of 57 green, still only the 3 known failures.
+
 Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · `[x]` done · `[-]` obsolete
 
 **Root cause of most problems:** `wheel` events cannot tell "finger resting", "finger lifted" and "momentum" apart, so the 200 ms idle timeout is wrong in both directions (F1, F2). On top of that the plugin did not check *where* a swipe happens (F5–F9).
@@ -53,17 +55,17 @@ Legend: `[ ]` open · `[~]` implemented, waiting for a test on a real device · 
 
 Found by an independent subagent review of the first recognizer version; F29 was a blocker.
 
-- [~] **F29 Finger deceleration taken as momentum.** The first version treated any 4 decreasing deltas after a peak as momentum. Deliberate swipes cancelled (a 220 px stroke, a steady 400 px swipe at 120 Hz), and cancels navigated twice: the reversal started a new gesture that navigated the other way. Now (v3): one speed step only freezes the swipe, a second step of equal duration confirms momentum, anything else resumes the swipe. A reversal during settling does not start a gesture while it speeds up (gap: F39). 3 recognizer tests still fail, see PLAN.md.
+- [~] **F29 Finger deceleration taken as momentum.** The first version treated any 4 decreasing deltas after a peak as momentum. Deliberate swipes cancelled (a 220 px stroke, a steady 400 px swipe at 120 Hz), and cancels navigated twice: the reversal started a new gesture that navigated the other way. Now (v3): one speed step only freezes the swipe, a second step of equal duration confirms momentum, anything else resumes the swipe. A reversal during settling never starts a gesture (F39). 3 recognizer tests still fail, see PLAN.md.
 - [~] **F30 Indicator showed "ready", the release cancelled.** Momentum events added to the offset before they were detected; the decision then used the earlier peak. Now the decision uses the frozen state, which is exactly the progress shown last (test "the decision always matches the progress shown last").
 - [~] **F31 A second swipe during momentum was swallowed.** Ending the settling phase needed one event of ≥ 4 px and > 1.5 × the previous one; a smooth ramp never met that. Now two rises in a row above 1.25 × the slowest momentum + 0.05 px/ms start a new gesture, which takes along the movement since the low point. Tests at 60 and 120 Hz.
 - [~] **F32 Parameters per event depended on the refresh rate.** A minimum peak of 4 px per event meant swipes slower than 0.48 px/ms at 120 Hz never counted as momentum, so momentum pushed them over the threshold. Now all parameters are in ms and px/ms. Slow swipes with integer deltas (4–5 px per event) remain noisy.
 - [~] **F33 A swipe right after vertical scrolling was swallowed.** The swipe's own events kept the rejected vertical gesture alive, so a longer gap would not have helped; the old version allowed it. Now a clearly horizontal event (≥ 2 px, ≥ 2:1) starts a new gesture after a pause of ≥ 50 ms or once the vertical speed fell to ≤ 50 % of its peak. A swipe into fast vertical momentum is still swallowed until it slows down.
 - [~] **F34 Double navigation after a blocked main thread.** Chromium coalesces queued wheel events; a coalesced momentum event counted as re-acceleration and started a second swipe. The gesture timer can also end a gesture before queued events are dispatched. Now a new gesture must speed up beyond 1.2 × its first event's speed (delta / time since the previous event) before it can swipe, and settling needs two rises in a row. Tests for both cases.
-- [ ] **F35 Context check on a vertical first event is too strict.** With `deltaX = 0` at the gesture start, horizontally scrollable content rejects the gesture in both directions. The old version accepted it at the left edge, and Chromium latches a vertical start to a vertical scroller anyway. Fix: skip the scroll-container check when `deltaX` is 0 (`canScrollHorizontally` in `src/context.ts`).
-- [ ] **F36 Gesture timer runs on the main window.** If the main window is hidden while the user works in a pop-out, background throttling can delay the release by about 1 s. Fix: `setTimeout` on the event's window (`scheduleGestureTimer` in `src/main.ts`, release timer in `SwipeIndicator`).
+- [~] **F35 Context check on a vertical first event was too strict.** With `deltaX = 0` at the gesture start, horizontally scrollable content rejected the gesture in both directions. The old version accepted it at the left edge, and Chromium latches a vertical start to a vertical scroller anyway. Now the scroll-container check is skipped when `deltaX` is 0 (`canScrollHorizontally` in `src/context.ts`). Tests in `test/context.test.ts` with DOM fakes.
+- [~] **F36 Gesture timer ran on the main window.** If the main window is hidden while the user works in a pop-out, background throttling can delay the release by about 1 s. Now the gesture timer (`scheduleGestureTimer` in `src/main.ts`) runs on the window of the wheel events and moves to the main window if that pop-out closes. The release timer in `SwipeIndicator` runs on the indicator's window; moving the indicator to another window ends a running release. No tests (needs Obsidian's windows).
 - [~] **F37 Tests passed for the wrong reason.** Nearly all used constant speeds with instant stops and reversals. Rewritten with minimum-jerk finger strokes, geometric momentum, integer deltas with carry, speed jitter, 60/120 Hz, coalesced events, the timer path and the callback order. Real traces are still missing.
-- [ ] **F38 `analyze-traces` assigns markers to two rows.** The 500 ms marker tail is not capped at the next gesture, and the 150 ms split cuts one recognizer gesture (a hold under 400 ms) into two rows.
-- [ ] **F39 A reversal during settling can still start a gesture.** The speed along the momentum turns negative during a reversal; when the reversal slows down, two rises in a row count as re-acceleration and start a gesture in the opposite direction, which can navigate if it covers the threshold. Fix idea: clamp the speed along the momentum at 0 in `followTrail`, and add a test (misdetected release followed by a long reversal). Found while writing the handover.
+- [~] **F38 `analyze-traces` assigned markers to two rows.** The 500 ms marker tail was not capped at the next gesture, and the 150 ms split cut one recognizer gesture (a hold under 400 ms) into two rows. Now a row's markers end at the next row's first event, and while the recorded markers show a swipe (horizontal axis lock, no release yet) only a 400 ms pause splits. Without markers the 150 ms gap applies as before. Checked with a synthetic trace, real traces pending.
+- [~] **F39 A reversal during settling could still start a gesture.** The speed along the momentum turned negative during a reversal; when the reversal slowed down, two rises in a row counted as re-acceleration and started a gesture in the opposite direction, which could navigate if it covered the threshold. Found while writing the handover. Now `followTrail` clamps the speed along the momentum at 0. The reversal is not carried into a following gesture either, it starts at the turning point (with the clamp alone, a short swipe back after a long reversal started "forward" and ready). Tests at 60 and 120 Hz: misdetected release followed by a 400 px reversal, and a short swipe after it.
 
 ### Phase 0: Measure
 
@@ -143,7 +145,7 @@ Built before the recordings; all numbers are provisional until the traces are in
 - [x] Remove the obsolete constants (`SWIPE_COOLDOWN`, `MIN_VELOCITY_TO_ACTIVATE`, `DIRECTION_RATIO`, `GESTURE_IDLE_TIMEOUT`)
 - [x] Realistic synthetic tests (F37); replay test for `test/fixtures/traces/` that runs once traces exist
 - [ ] Fix the 3 failing tests (analysis and ideas in PLAN.md → Übergabe)
-- [ ] Fix F35, F36, F38, F39
+- [~] Fix F35, F36, F38, F39
 - [ ] Tune the parameters with recorded traces until the replay tests pass
 - [ ] Second review round by an independent subagent
 
@@ -157,7 +159,7 @@ Drafted in `src/SwipeIndicator.ts` and `src/SwipeIndicator.draft.css`, not wired
 - [x] Draft: `SwipeIndicator` class with CSS variables + `transform`, updates batched per animation frame, icon created once, a new swipe takes over a running release animation (F17, F21)
 - [x] Draft: respect `prefers-reduced-motion`
 - [ ] Wire `SwipeIndicator` into `main.ts`, replace the indicator block in `styles.css`, delete the draft CSS file
-- [ ] Release timer on the swiped window (F36)
+- [~] Release timer on the swiped window (F36)
 - [ ] Review by an independent subagent
 - [ ] Check on the device: light and dark theme, reduced motion, split view, pop-out, no history
 - [ ] Optional, not in this round: content follows slightly, new note slides in after navigating (F19)

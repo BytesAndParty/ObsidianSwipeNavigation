@@ -35,7 +35,7 @@ export class SwipeIndicator {
 	private readonly containerEl: HTMLElement;
 	private pending: IndicatorState | null = null;
 	private frame: { win: Window; id: number } | null = null;
-	private releaseTimer: number | null = null;
+	private releaseTimer: { win: Window; id: number } | null = null;
 
 	constructor() {
 		// The container covers the swiped pane and clips the circle to it
@@ -63,7 +63,8 @@ export class SwipeIndicator {
 
 	moveTo(doc: Document) {
 		if (this.containerEl.doc !== doc) {
-			this.cancelFrame();
+			// Frame and release timer belong to the old window, which may be closing
+			this.hide();
 			doc.body.appendChild(this.containerEl);
 		}
 	}
@@ -108,18 +109,19 @@ export class SwipeIndicator {
 		}
 		style.setProperty('--swipe-nav-opacity', '0');
 
-		this.releaseTimer = window.setTimeout(() => {
+		// On the indicator's window: a hidden main window throttles its timers (F36)
+		this.clearReleaseTimer();
+		const win = this.containerEl.win;
+		const id = win.setTimeout(() => {
 			this.releaseTimer = null;
 			this.containerEl.removeClass('is-visible', 'is-releasing', 'is-ready');
 		}, DECAY_ANIMATION_DURATION);
+		this.releaseTimer = { win, id };
 	}
 
 	destroy() {
 		this.cancelFrame();
-		if (this.releaseTimer !== null) {
-			window.clearTimeout(this.releaseTimer);
-			this.releaseTimer = null;
-		}
+		this.clearReleaseTimer();
 		this.containerEl.remove();
 	}
 
@@ -150,11 +152,15 @@ export class SwipeIndicator {
 	}
 
 	private finishRelease() {
+		this.clearReleaseTimer();
+		this.containerEl.removeClass('is-releasing');
+	}
+
+	private clearReleaseTimer() {
 		if (this.releaseTimer !== null) {
-			window.clearTimeout(this.releaseTimer);
+			this.releaseTimer.win.clearTimeout(this.releaseTimer.id);
 			this.releaseTimer = null;
 		}
-		this.containerEl.removeClass('is-releasing');
 	}
 
 	private cancelFrame() {

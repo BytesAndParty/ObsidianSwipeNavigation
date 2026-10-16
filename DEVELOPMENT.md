@@ -16,12 +16,13 @@ src/
   SettingsTab.ts        # Settings UI
 test/
   GestureRecognizer.test.ts  # Synthetic gestures
+  context.test.ts            # Scroll-container check of the gesture context, with DOM fakes
   replay.test.ts             # Replays recorded traces from test/fixtures/traces/
 scripts/
   analyze-traces.ts     # One row per gesture for recorded traces
 styles.css              # Indicator, settings and recording styles
 PLAN.md                 # v1.1 rework: goal, phases, decisions, risks (German)
-TODO.md                 # Findings F1-F28 and checklists
+TODO.md                 # Findings F1-F39 and checklists
 ```
 
 `GestureRecognizer.ts`, `input.ts` and `trace.ts` must not import `obsidian`: Bun runs them outside Obsidian in tests and scripts.

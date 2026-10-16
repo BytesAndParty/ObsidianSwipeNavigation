@@ -301,6 +301,31 @@ describe('cancel and hysteresis', () => {
 		expect(navigations(result)).toEqual([]);
 	});
 
+	for (const [rate, interval] of RATES) {
+		// The finger slows down like momentum, so the release is confirmed
+		// while it still rests on the trackpad; then it moves back 400 px
+		const misdetected = () => new Gesture(interval)
+			.stroke(-300, 0, 300, { until: 0.6, momentumMs: 200 })
+			.stroke(400, 0, 400);
+
+		test(`a long reversal after a misdetected release does not navigate the other way (F39, ${rate})`, () => {
+			const result = run(misdetected());
+			// The misdetected release decides on its own, the reversal adds nothing
+			expect(result.releases).toHaveLength(1);
+			expect(result.releases[0].reason).toBe('momentum');
+			expect(result.starts).toBe(1);
+			expect(navigations(result)).toEqual(['back']);
+		});
+
+		test(`a swipe after that reversal starts at the turning point (F39, ${rate})`, () => {
+			// Short of the threshold: carrying the reversal along would make it "forward" and ready
+			const result = run(misdetected().stroke(-100, 0, 300));
+			expect(result.releases).toHaveLength(2);
+			expect(result.releases[1].direction).toBe('back');
+			expect(navigations(result)).toEqual(['back']);
+		});
+	}
+
 	test('a large event across the start point keeps the distance (F27)', () => {
 		const result = run(new Gesture().move(-10, 10).move(150, 1));
 		expect(lastProgress(result).direction).toBe('forward');

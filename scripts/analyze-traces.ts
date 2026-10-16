@@ -2,21 +2,29 @@
 //
 // Usage: bun run analyze-traces <trace.json | folder> [...more]
 //
-// Splits each trace into gestures at gaps without wheel events and prints one
-// row per gesture, so input patterns (momentum tails, zero-delta lift events,
-// mouse notches, refresh-rate dependent deltas) can be compared per scenario.
+// Splits each trace into gestures at pauses without wheel events, like the
+// recognizer, and prints one row per gesture, so input patterns (momentum
+// tails, zero-delta lift events, mouse notches, refresh-rate dependent deltas)
+// can be compared per scenario.
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import type { GestureTrace, TraceMarker, TraceWheelEvent } from '../src/trace';
 import { isLikelyMouseWheel } from '../src/input';
+import { RECOGNIZER_DEFAULTS } from '../src/GestureRecognizer';
 
-// Gap without wheel events that separates two gestures
-const GESTURE_GAP_MS = 150;
+// Pause without wheel events that separates two gestures
+const GESTURE_GAP_MS = RECOGNIZER_DEFAULTS.gestureGapMs;
+// A swipe only ends with the release fallback, so holding still for less stays one gesture
+const RELEASE_TIMEOUT_MS = RECOGNIZER_DEFAULTS.releaseTimeoutMs;
 
-// Markers this long after a gesture's last event still belong to it
-// (a timeout release fires 400 ms after the last event, see GestureRecognizer.ts)
+// Markers this long after a gesture's last event still belong to it (a timeout
+// release fires 400 ms after the last event), unless the next gesture starts first
 const MARKER_TAIL_MS = 500;
+
+// Markers and events come from different clocks (performance.now() and the
+// event's timeStamp), so a marker may be stamped just before its event
+const CLOCK_TOLERANCE_MS = 1;
 
 interface GestureRow {
 	'#': number;
@@ -49,11 +57,23 @@ function collectFiles(paths: string[]): string[] {
 	return files;
 }
 
-function splitGestures(events: TraceWheelEvent[]): TraceWheelEvent[][] {
+/**
+ * Split at pauses like the recognizer: a swipe ends only after the release
+ * fallback, anything else after the shorter gesture gap (F38). Whether the
+ * recorded gesture was swiping comes from its markers; traces without
+ * markers fall back to the gesture gap.
+ */
+function splitGestures(events: TraceWheelEvent[], markers: TraceMarker[]): TraceWheelEvent[][] {
 	const gestures: TraceWheelEvent[][] = [];
 	let current: TraceWheelEvent[] = [];
+	let swiping = false;
+	let nextMarker = 0;
 	for (const event of events) {
-		if (current.length > 0 && event.t - current[current.length - 1].t > GESTURE_GAP_MS) {
+		for (; nextMarker < markers.length && markers[nextMarker].t < event.t; nextMarker++) {
+			swiping = swipingAfter(markers[nextMarker], swiping);
+		}
+		const previous = current[current.length - 1];
+		if (previous && event.t - previous.t >= (swiping ? RELEASE_TIMEOUT_MS : GESTURE_GAP_MS)) {
 			gestures.push(current);
 			current = [];
 		}
@@ -61,6 +81,20 @@ function splitGestures(events: TraceWheelEvent[]): TraceWheelEvent[][] {
 	}
 	if (current.length > 0) gestures.push(current);
 	return gestures;
+}
+
+/** Whether the recorded gesture swipes after this marker: axis locked horizontally, not released yet */
+function swipingAfter(marker: TraceMarker, swiping: boolean): boolean {
+	switch (marker.type) {
+		case 'axis':
+			return marker.data?.axis === 'horizontal';
+		case 'gesture-start':
+		case 'release':
+		case 'gesture-end':
+			return false;
+		default:
+			return swiping;
+	}
 }
 
 function median(values: number[]): number {
@@ -88,11 +122,14 @@ function decayingTailLength(events: TraceWheelEvent[]): number {
 	return length;
 }
 
-function summariseGesture(index: number, events: TraceWheelEvent[], markers: TraceMarker[]): GestureRow {
+/** nextStart: time of the next gesture's first event; its markers are not counted here */
+function summariseGesture(index: number, events: TraceWheelEvent[], markers: TraceMarker[], nextStart = Infinity): GestureRow {
 	const first = events[0];
 	const last = events[events.length - 1];
 	const intervals = events.slice(1).map((event, i) => event.t - events[i].t);
-	const inGesture = markers.filter(m => m.t >= first.t - 1 && m.t <= last.t + MARKER_TAIL_MS);
+	const inGesture = markers.filter(m => m.t >= first.t - CLOCK_TOLERANCE_MS
+		&& m.t <= last.t + MARKER_TAIL_MS
+		&& m.t < nextStart - CLOCK_TOLERANCE_MS);
 
 	return {
 		'#': index + 1,
@@ -154,8 +191,8 @@ function analyse(file: string) {
 		`${trace.truncated ? ' (TRUNCATED)' : ''}, mouse-like notches: ${mouseLike}, with modifiers: ${withModifiers}`,
 	);
 
-	const gestures = splitGestures(trace.events);
-	console.table(gestures.map((events, i) => summariseGesture(i, events, trace.markers)));
+	const gestures = splitGestures(trace.events, trace.markers);
+	console.table(gestures.map((events, i) => summariseGesture(i, events, trace.markers, gestures[i + 1]?.[0].t)));
 }
 
 const args = process.argv.slice(2);

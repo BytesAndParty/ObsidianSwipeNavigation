@@ -405,12 +405,17 @@ export class GestureRecognizer {
 		this.trailSinceMin = 0;
 	}
 
-	/** Speed along the momentum; it only ever decreases until the fingers touch again. */
+	/**
+	 * Speed along the momentum; it only ever decreases until the fingers touch
+	 * again. Moving against the momentum counts as 0, so a reversal that slows
+	 * down never looks like re-acceleration (F39).
+	 */
 	private followTrail(sample: WheelSample) {
-		const speed = this.velocity('dx') * this.trailSign;
+		const speed = Math.max(0, this.velocity('dx') * this.trailSign);
 		this.trailRising = speed > this.trailSpeed ? this.trailRising + 1 : 0;
 		this.trailSpeed = speed;
-		if (speed < this.trailMin) {
+		// A reversal is not carried into the next gesture either: it starts at the turning point
+		if (speed < this.trailMin || speed === 0) {
 			this.trailMin = speed;
 			this.trailSinceMin = 0;
 		} else {

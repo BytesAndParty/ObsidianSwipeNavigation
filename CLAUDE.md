@@ -56,6 +56,7 @@ src/
   SettingsTab.ts       — Obsidian settings tab UI
 test/
   GestureRecognizer.test.ts — Synthetic gestures per finding
+  context.test.ts           — Scroll-container check of the gesture context, with DOM fakes (Bun has no DOM)
   replay.test.ts            — Replays recorded traces per scenario
 scripts/
   analyze-traces.ts    — Offline trace analysis (runs with Bun outside Obsidian)

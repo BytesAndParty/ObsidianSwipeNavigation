@@ -18,6 +18,7 @@ Für alle, die hier weitermachen: Dieser Abschnitt sagt, wo die Arbeit steht, wa
   - `d8fdda9` feat: draft Safari-style swipe indicator (not wired yet) (Phase 3, Entwurf)
   - `f3121ca` docs: update README, development guide and disclaimer for v1.1
 - **Build** (`bun run build`) ist grün. **Tests** (`bun test`): 47 von 50 grün, 1 übersprungen (Replay, weil es noch keine Traces gibt), 3 rot (siehe unten).
+- **Nachtrag 2026-10-16:** F35, F36, F38 und F39 sind umgesetzt, am Gerät nicht getestet. `bun test`: 54 von 57 grün, 1 übersprungen, rot sind weiter nur die 3 Tests unten.
 - **Nichts ist am Gerät getestet**, es gibt noch keine Aufnahmen. Alle Parameter sind Schätzungen.
 - Das Plugin nutzt schon die neue Erkennung aus Phase 2. Der neue Indikator aus Phase 3 liegt als Entwurf in `src/SwipeIndicator.ts` und `src/SwipeIndicator.draft.css`. `main.ts` steuert noch den alten Indikator.
 - README und DEVELOPMENT.md beschreiben schon den Zielzustand inklusive des neuen Indikators.
@@ -31,11 +32,27 @@ Für alle, die hier weitermachen: Dieser Abschnitt sagt, wo die Arbeit steht, wa
    - Ablauf: Build in den Test-Vault (siehe „Test-Vault“), Debug-Modus an, Szenarien aus Phase 0 aufnehmen. Traces nach `test/fixtures/traces/` kopieren, dann `bun run analyze-traces test/fixtures/traces` und `bun test` laufen lassen.
 2. **Phase 2 abschließen:**
    - die 3 roten Tests (unten)
-   - die offenen Findings F35, F36, F38 und F39
+   - ~~die offenen Findings F35, F36, F38 und F39~~ umgesetzt am 2026-10-16, Gerätetest offen
    - die Parameter mit den Traces einstellen
    - danach eine zweite Review-Runde durch einen Subagenten, mit diesem Plan und der TODO als Maßstab
 3. **Phase 3:** `SwipeIndicator` einbauen (Schritte unten), dann Review.
 4. **Phase 4:** Robert entscheidet die Plugin-ID. Danach Version 1.1.0, Testmatrix, Release.
+
+### Fahrplan (Stand 2026-10-16)
+
+| # | Schritt | Wer | Abhängig von | Status |
+|---|---|---|---|---|
+| 1 | Build in den Test-Vault, Szenarien aufnehmen, Traces nach `test/fixtures/traces/` | Robert am Gerät | nichts | offen, blockiert 3 und 4 |
+| 2 | F35, F36, F38, F39 | Subagent | nichts | umgesetzt 2026-10-16, Gerätetest offen |
+| 3 | Die 3 roten Tests klären (mit Traces entscheiden, ob Test oder Code falsch ist) | Subagent | 1 | offen |
+| 4 | Parameter in `RECOGNIZER_DEFAULTS` mit den Replay-Tests einstellen, danach zweite Review-Runde | Subagent, Auswertung gemeinsam | 1, 3 | offen |
+| 5 | Phase 3: `SwipeIndicator` einbauen, Review | Subagent | 2 (Aufbau), Gerätetest nach 4 | offen |
+| 6 | Phase-1-Gerätetest (Checkliste in TODO.md) | Robert | 5 | offen |
+| 7 | Phase 4: Plugin-ID entscheiden (F24), Version 1.1.0, Testmatrix, Release | Robert, Subagent | 6 | offen |
+
+Danach, optional: F28 (Zoom), F19 (Übergangsanimation), `WheelEvent.momentum` ab Chromium 151.
+
+Zusammenarbeit: Die Hauptsession koordiniert und wertet aus, Opus-Subagenten setzen um. Schritt 2 ist so gelaufen.
 
 ### Arbeitsweise (Roberts Regeln)
 
@@ -113,7 +130,7 @@ Debug-Hilfe, die beim Eingrenzen am meisten geholfen hat:
   - `detachFromWindow` → `indicator.moveTo(document)`
   - `onunload` → `indicator.destroy()`
 - **`styles.css`:** Den Block „=== Swipe Indicators ===“ durch `src/SwipeIndicator.draft.css` ersetzen und die Entwurfsdatei löschen. Den Kopfkommentar in `SwipeIndicator.ts` entfernen.
-- **Timer (F36):** im Fenster des Events setzen statt im Hauptfenster. Das gilt auch für den Release-Timer im Indikator.
+- **Timer (F36):** umgesetzt. Der Release-Timer im Indikator läuft im Fenster des Indikators, `moveTo()` beendet eine laufende Release-Animation.
 - **Am Gerät prüfen:** helles und dunkles Theme, reduzierte Bewegung, geteilte Ansicht, Pop-out, keine History in Swipe-Richtung.
 
 ## Ziel
@@ -191,7 +208,7 @@ Der Kern für das Gefühl. Die Klasse `GestureRecognizer` (`src/GestureRecognize
   - → `swiping` (horizontal gesperrt) oder `rejected` (vertikal oder Kontext abgelehnt)
   - → `releasing` (Loslassen vorläufig, Anzeige eingefroren)
   - → Entscheidung → `settling` (Momentum wird geschluckt) → `idle`
-- **Kontext:** einmal am ersten Event jeder Geste, auch beim vertikalen Scrollen. Eine abgelehnte Geste bleibt bis zu ihrem Ende abgelehnt, auch durch Momentum. Beginnt die Geste vertikal (`deltaX = 0`), lehnt horizontal scrollbarer Inhalt sie derzeit in beide Richtungen ab. Laut Review ist das zu streng (F35, offen).
+- **Kontext:** einmal am ersten Event jeder Geste, auch beim vertikalen Scrollen. Eine abgelehnte Geste bleibt bis zu ihrem Ende abgelehnt, auch durch Momentum. Beginnt die Geste vertikal (`deltaX = 0`), entfällt die Prüfung auf horizontal scrollbaren Inhalt. Chromium bindet so eine Geste ohnehin an einen vertikalen Scroller (F35).
 - **Achse:** nach den ersten 12 px Bewegung festgelegt und beibehalten. Horizontal, wenn |Σdx| ≥ 2 × |Σdy| (F15).
 - **Anlauf:** Eine Geste muss schneller werden als 1,2-mal ihr erstes Event (Delta durch die Zeit seit dem vorigen Event), bevor sie wischen kann. Finger starten aus der Ruhe. Übrig gebliebenes oder nach einem Ruckeln zusammengefasstes Momentum wird nie schneller (F34).
 - **Weg ab Gesten-Beginn:** Fortschritt = Weg seit Gesten-Beginn / Schwelle (Empfindlichkeit × 3, Standard 150 px). Ein Richtungswechsel über den Startpunkt wird ohne Zurücksetzen verrechnet (F14, F27).
@@ -207,7 +224,7 @@ Der Kern für das Gefühl. Die Klasse `GestureRecognizer` (`src/GestureRecognize
 - **Ruhephase:** Restliches Momentum wird geschluckt, bis 150 ms lang nichts kommt.
   - Zwei Anstiege hintereinander, deutlich über dem langsamsten Momentum, heißen: Die Finger liegen wieder auf. Dann beginnt eine neue Geste und nimmt den Weg seit dem Tiefpunkt mit (F18, F31).
   - Ein einzelner Sprung, etwa zusammengefasste Events nach einem Ruckeln, reicht nicht (F34).
-  - Eine Umkehr während der Ruhephase startet keine Geste, solange sie schneller wird. Bremst sie ab, kann die Regel „zwei Anstiege“ trotzdem eine Geste in Gegenrichtung starten (F39, offen).
+  - Eine Umkehr während der Ruhephase startet keine Geste. Die Geschwindigkeit entlang des Momentums zählt dabei als 0, auch wenn die Umkehr abbremst. Eine spätere Geste beginnt am Wendepunkt und nimmt die Umkehr nicht mit (F39).
 - **Vertikales Scrollen gibt nach:** Ein klar horizontales Event (≥ 2 px, ≥ 2:1) startet eine neue Geste, wenn davor mindestens 50 ms Pause war oder die vertikale Geschwindigkeit auf höchstens 50 % ihres Höchstwerts gefallen ist (F33).
 - **Kein Cooldown** zwischen Gesten (F18).
 - **Parameter:** `RECOGNIZER_DEFAULTS` in `src/GestureRecognizer.ts`. Alle Werte sind vorläufig.
@@ -264,7 +281,7 @@ Entwurf in `src/SwipeIndicator.ts` und `src/SwipeIndicator.draft.css`, Einbau si
 | Gleiche Geschwindigkeitsstufen statt gleicher Zeitfenster | Nahe am Höchstwert bremst auch ein Finger fast mit konstanter Rate, gleich lange Zeitfenster trennen das schlecht (v2). Gleiche Stufen messen, ob das Abbremsen schneller wird. |
 | Entscheidung mit dem eingefrorenen, angezeigten Stand | Was der Indikator zeigt, entscheidet (F30). Ein späterer Stand lässt Momentum mitzählen (v2b, F1). |
 | Anlauf-Pflicht für neue Gesten | Nach einem Ruckeln oder einem zu früh feuernden Timer darf übrig gebliebenes Momentum keine zweite Navigation auslösen (F34). |
-| Umkehr in der Ruhephase startet keine Geste | Sonst navigiert eine Abbruch-Bewegung nach einem falsch erkannten Loslassen in die Gegenrichtung (F29). Noch lückenhaft, siehe F39. |
+| Umkehr in der Ruhephase startet keine Geste | Sonst navigiert eine Abbruch-Bewegung nach einem falsch erkannten Loslassen in die Gegenrichtung (F29). Gilt auch, wenn die Umkehr abbremst (F39). |
 | Kein Cooldown zwischen Gesten | Eine Geste löst höchstens einmal aus, Momentum wird geschluckt. Ein Cooldown würde nur bewusste zweite Swipes verschlucken (F18). |
 | Richtung als Einstellung | Chromium meldet nicht, ob die Deltas durch Natural Scrolling invertiert sind. |
 | Maus-Erkennung per Heuristik | `deltaMode` ungleich 0 oder `wheelDeltaX` als 120er-Vielfaches, dessen Verhältnis zu `deltaX` nicht das eines Trackpads ist (F26). Wird mit den Traces geprüft. |

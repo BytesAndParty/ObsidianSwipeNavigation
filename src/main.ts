@@ -56,7 +56,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 		release: release => this.onSwipeRelease(release),
 		end: () => this.onGestureEnd(),
 	}, DEFAULT_SETTINGS.sensitivity * SWIPE_THRESHOLD_MULTIPLIER);
-	private gestureTimer: number | null = null;
+	private gestureTimer: { win: Window; id: number } | null = null;
 	private gestureLeaf: WorkspaceLeaf | null = null; // null = rejected at gesture start
 	private shownDirection: SwipeDirection | null = null;
 	private shownReady: boolean = false;
@@ -111,6 +111,11 @@ export default class SwipeNavigationPlugin extends Plugin {
 	private detachFromWindow(win: Window) {
 		this.windowCleanups.get(win)?.();
 		this.windowCleanups.delete(win);
+
+		// A timer of the closing window would never fire: let the main window finish the gesture
+		if (this.gestureTimer?.win === win) {
+			this.scheduleGestureTimer(window);
+		}
 
 		// Rescue the indicators before the pop-out's document goes away
 		if (this.indicatorLeft?.doc === win.document) {
@@ -221,7 +226,7 @@ export default class SwipeNavigationPlugin extends Plugin {
 		// Negative deltaX swipes back, unless the user reversed the direction
 		const dx = this.settings.invertDirection ? -event.deltaX : event.deltaX;
 		this.recognizer.feed({ t: absoluteEventTime(event), dx, dy: event.deltaY }, () => this.beginGesture(event));
-		this.scheduleGestureTimer();
+		this.scheduleGestureTimer(event.win);
 
 		// Debug logging (only when debugMode is enabled)
 		if (this.settings.debugMode && (Math.abs(event.deltaX) > MIN_DELTA_FOR_LOG || Math.abs(event.deltaY) > MIN_DELTA_FOR_LOG)) {
@@ -322,24 +327,27 @@ export default class SwipeNavigationPlugin extends Plugin {
 
 	/**
 	 * The recognizer only sees wheel events. This timer lets it notice pauses:
-	 * the release fallback while swiping, and the end of other gestures.
+	 * the release fallback while swiping, and the end of other gestures. It runs
+	 * on the window of the wheel events: a hidden main window throttles its
+	 * timers, which could delay the release in a pop-out by about 1 s (F36).
 	 */
-	private scheduleGestureTimer() {
+	private scheduleGestureTimer(win: Window) {
 		this.clearGestureTimer();
 		const deadline = this.recognizer.deadline();
 		if (deadline === null) {
 			return;
 		}
-		this.gestureTimer = window.setTimeout(() => {
+		const id = win.setTimeout(() => {
 			this.gestureTimer = null;
 			this.recognizer.tick(now());
-			this.scheduleGestureTimer();
+			this.scheduleGestureTimer(win);
 		}, Math.max(0, deadline - now()));
+		this.gestureTimer = { win, id };
 	}
 
 	private clearGestureTimer() {
 		if (this.gestureTimer !== null) {
-			window.clearTimeout(this.gestureTimer);
+			this.gestureTimer.win.clearTimeout(this.gestureTimer.id);
 			this.gestureTimer = null;
 		}
 	}
